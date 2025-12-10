@@ -114,6 +114,9 @@ flutter build ios --dart-define=GOOGLE_MAPS_API_KEY=YOUR_KEY
 
 - **Email**: `testsup@gmail.com`
 - **Password**: `123456`
+- **Email**: `ts@gmail.com`
+- **Password**: `123456`
+- Or Register as Supervisor from the main webapp: https://citygo.lovable.app/auth
 
 ## Test NFC Cards
 
