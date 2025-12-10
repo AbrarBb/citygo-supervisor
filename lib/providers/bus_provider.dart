@@ -36,6 +36,11 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
       },
     );
     
+    // If not assigned, return null
+    if (busInfo == null) {
+      return null;
+    }
+    
     // Cache it asynchronously (don't wait)
     try {
       final localDB = LocalDB();

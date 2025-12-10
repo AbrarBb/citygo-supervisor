@@ -246,7 +246,7 @@ class _SyncCenterScreenState extends ConsumerState<SyncCenterScreen> {
                 ] else ...[
                   const SizedBox(height: AppTheme.spacingXS),
                   Text(
-                    '${log['passenger_count']} passengers • \$${log['fare']}',
+                    '${log['passenger_count']} passengers • ৳${log['fare']}',
                     style: const TextStyle(
                       fontSize: 12,
                       color: AppTheme.textTertiary,

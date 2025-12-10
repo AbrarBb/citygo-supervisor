@@ -163,7 +163,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                                 ),
                                 const SizedBox(height: AppTheme.spacingXS),
                                 Text(
-                                  '\$${report.totalFare.toStringAsFixed(2)}',
+                                  '৳${report.totalFare.toStringAsFixed(2)}',
                                   style: const TextStyle(
                                     fontSize: 24,
                                     fontWeight: FontWeight.bold,

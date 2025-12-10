@@ -11,6 +11,7 @@ import '../providers/report_provider.dart';
 import '../models/report.dart';
 import 'nfc_reader.dart';
 import 'manual_ticket.dart';
+import 'bookings.dart';
 import 'package:intl/intl.dart';
 
 /// Dashboard Screen - Main screen matching CityGo webapp
@@ -115,6 +116,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
+  void _openBookings(String busId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BookingsScreen(busId: busId),
+      ),
+    );
+  }
+
   void _openManualTicket(String busId) {
     Navigator.push(
       context,
@@ -187,7 +197,48 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       body: busAsync.when(
         data: (busInfo) {
           if (busInfo == null) {
-            return const Center(child: Text('No bus assigned'));
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(AppTheme.spacingMD),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.directions_bus_outlined,
+                      size: 80,
+                      color: AppTheme.textSecondary,
+                    ),
+                    const SizedBox(height: AppTheme.spacingMD),
+                    Text(
+                      'No Bus Assigned',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.spacingSM),
+                    Text(
+                      'You are not currently assigned to any bus.\nPlease wait for a driver to assign you.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.spacingLG),
+                    PrimaryButton(
+                      text: 'Refresh',
+                      icon: Icons.refresh,
+                      onPressed: () {
+                        ref.invalidate(busProvider);
+                      },
+                      width: 200,
+                    ),
+                  ],
+                ),
+              ),
+            );
           }
           return RefreshIndicator(
             onRefresh: () async {
@@ -226,6 +277,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           children: [
                             Expanded(
                               child: SecondaryButton(
+                                text: 'View Bookings',
+                                icon: Icons.event_seat,
+                                onPressed: () => _openBookings(busInfo.id),
+                              ),
+                            ),
+                            const SizedBox(width: AppTheme.spacingMD),
+                            Expanded(
+                              child: SecondaryButton(
                                 text: 'Manual Ticket',
                                 icon: Icons.receipt,
                                 onPressed: () => _openManualTicket(busInfo.id),
@@ -243,16 +302,65 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         },
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('Error: ${error.toString()}'),
-              const SizedBox(height: AppTheme.spacingMD),
-              ElevatedButton(
-                onPressed: () => ref.invalidate(busProvider),
-                child: const Text('Retry'),
-              ),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingMD),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: AppTheme.errorColor,
+                ),
+                const SizedBox(height: AppTheme.spacingMD),
+                Text(
+                  'Unable to Load Bus Information',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacingSM),
+                Text(
+                  error.toString().replaceFirst('Exception: ', ''),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacingLG),
+                PrimaryButton(
+                  text: 'Retry',
+                  icon: Icons.refresh,
+                  onPressed: () {
+                    ref.invalidate(busProvider);
+                    ref.invalidate(todayReportProvider);
+                  },
+                  width: 200,
+                ),
+                const SizedBox(height: AppTheme.spacingMD),
+                TextButton(
+                  onPressed: () {
+                    // Show message about waiting for assignment
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text(
+                          'If you are not assigned to a bus, please wait for a driver to assign you.',
+                        ),
+                        duration: const Duration(seconds: 4),
+                        backgroundColor: AppTheme.primaryGreen,
+                      ),
+                    );
+                  },
+                  child: Text(
+                    'Need Help?',
+                    style: TextStyle(color: AppTheme.primaryGreen),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -474,8 +582,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         .map<LatLng>((stop) => LatLng(stop.latitude, stop.longitude))
         .toList();
 
-    final defaultLat = _currentPosition?.latitude ?? 23.8103;
-    final defaultLng = _currentPosition?.longitude ?? 90.4125;
+    // Debug logging
+    print('🗺️ Map Debug: BusInfo route: ${busInfo.route != null}');
+    print('🗺️ Map Debug: Stops count: ${stops.length}');
+    if (stops.isNotEmpty) {
+      print('🗺️ Map Debug: First stop: ${stops.first.name} at ${stops.first.latitude}, ${stops.first.longitude}');
+    }
+
+    final defaultLat = _currentPosition?.latitude ?? 
+        (stops.isNotEmpty ? stops.first.latitude : 23.8103);
+    final defaultLng = _currentPosition?.longitude ?? 
+        (stops.isNotEmpty ? stops.first.longitude : 90.4125);
 
     return MapContainer(
       height: 300,
@@ -498,25 +615,54 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 onMapCreated: (controller) {
                   _mapController = controller;
                   print('✅ Google Map created successfully');
+                  print('🗺️ Map Debug: Polyline points count: ${polylinePoints.length}');
+                  print('🗺️ Map Debug: Stops count: ${stops.length}');
+                  
                   // Update camera to show route if available
-                  if (polylinePoints.isNotEmpty && polylinePoints.length > 1) {
-                    Future.delayed(const Duration(milliseconds: 500), () {
+                  if (polylinePoints.isNotEmpty) {
+                    Future.delayed(const Duration(milliseconds: 800), () {
                       try {
-                        controller.animateCamera(
-                          CameraUpdate.newLatLngBounds(
-                            _boundsFromLatLngList(polylinePoints),
-                            50,
-                          ),
-                        );
+                        if (polylinePoints.length > 1) {
+                          // Multiple stops - show bounds
+                          controller.animateCamera(
+                            CameraUpdate.newLatLngBounds(
+                              _boundsFromLatLngList(polylinePoints),
+                              80,
+                            ),
+                          );
+                          print('✅ Camera animated to show all stops');
+                        } else {
+                          // Single stop - center on it
+                          controller.animateCamera(
+                            CameraUpdate.newLatLngZoom(
+                              polylinePoints.first,
+                              15,
+                            ),
+                          );
+                          print('✅ Camera centered on single stop');
+                        }
                       } catch (e) {
-                        print('Error animating camera: $e');
+                        print('❌ Error animating camera: $e');
                         // If bounds calculation fails, just center on first point
                         if (polylinePoints.isNotEmpty) {
                           controller.animateCamera(
-                            CameraUpdate.newLatLng(polylinePoints.first),
+                            CameraUpdate.newLatLngZoom(
+                              polylinePoints.first,
+                              15,
+                            ),
                           );
                         }
                       }
+                    });
+                  } else {
+                    print('⚠️ No polyline points available - centering on default location');
+                    Future.delayed(const Duration(milliseconds: 500), () {
+                      controller.animateCamera(
+                        CameraUpdate.newLatLngZoom(
+                          LatLng(defaultLat, defaultLng),
+                          15,
+                        ),
+                      );
                     });
                   }
                 },
@@ -538,20 +684,32 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       infoWindow: const InfoWindow(title: 'Current Location'),
                     ),
                   // Add all stop markers
-                  ...stops.asMap().entries.map<Marker>((entry) {
-                    final stop = entry.value;
-                    return Marker(
-                      markerId: MarkerId('stop_${stop.id}'),
-                      position: LatLng(stop.latitude, stop.longitude),
+                  if (stops.isNotEmpty)
+                    ...stops.asMap().entries.map<Marker>((entry) {
+                      final stop = entry.value;
+                      print('📍 Adding marker for stop: ${stop.name} at ${stop.latitude}, ${stop.longitude}');
+                      return Marker(
+                        markerId: MarkerId('stop_${stop.id}'),
+                        position: LatLng(stop.latitude, stop.longitude),
+                        icon: BitmapDescriptor.defaultMarkerWithHue(
+                          BitmapDescriptor.hueBlue,
+                        ),
+                        infoWindow: InfoWindow(
+                          title: stop.name,
+                          snippet: 'Stop ${entry.key + 1} of ${stops.length}',
+                        ),
+                      );
+                    })
+                  else
+                    // Fallback marker if no stops
+                    Marker(
+                      markerId: const MarkerId('default_location'),
+                      position: LatLng(defaultLat, defaultLng),
                       icon: BitmapDescriptor.defaultMarkerWithHue(
-                        BitmapDescriptor.hueBlue,
+                        BitmapDescriptor.hueRed,
                       ),
-                      infoWindow: InfoWindow(
-                        title: stop.name,
-                        snippet: 'Stop ${entry.key + 1}',
-                      ),
-                    );
-                  }),
+                      infoWindow: const InfoWindow(title: 'Default Location'),
+                    ),
                 },
                 polylines: polylinePoints.length > 1
                     ? <Polyline>{
@@ -559,7 +717,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           polylineId: const PolylineId('route'),
                           points: polylinePoints,
                           color: AppTheme.primaryGreen,
-                          width: 4,
+                          width: 5,
                           patterns: [],
                           geodesic: true,
                         ),

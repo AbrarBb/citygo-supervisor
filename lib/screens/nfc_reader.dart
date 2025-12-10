@@ -237,11 +237,11 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
                   _buildResultRow('Status', 'Success'),
                   if (response.fare != null) ...[
                     const SizedBox(height: AppTheme.spacingSM),
-                    _buildResultRow('Fare', '\$${response.fare!.toStringAsFixed(2)}'),
+                    _buildResultRow('Fare', '৳${response.fare!.toStringAsFixed(2)}'),
                   ],
                   if (response.balance != null) ...[
                     const SizedBox(height: AppTheme.spacingSM),
-                    _buildResultRow('Balance', '\$${response.balance!.toStringAsFixed(2)}'),
+                    _buildResultRow('Balance', '৳${response.balance!.toStringAsFixed(2)}'),
                   ],
                   if (response.co2Saved != null) ...[
                     const SizedBox(height: AppTheme.spacingSM),

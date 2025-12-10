@@ -1,6 +1,5 @@
 import '../services/api_service.dart';
 import '../services/local_db.dart';
-import '../models/nfc.dart';
 import '../models/sync.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -47,30 +46,60 @@ class SyncService {
         );
       }
 
-      // Convert manual tickets to NFC events format for sync
-      final allEvents = <NfcEvent>[];
+      // Format events according to API documentation
+      final allFormattedEvents = <Map<String, dynamic>>[];
       
-      // Add NFC events
-      allEvents.addAll(nfcEvents);
+      // Format NFC events
+      for (var event in nfcEvents) {
+        allFormattedEvents.add({
+          'type': event.eventType, // 'tap_in' or 'tap_out'
+          'offline_id': event.offlineId,
+          'card_id': event.cardId,
+          'bus_id': event.busId,
+          'location': {
+            'lat': event.latitude,
+            'lng': event.longitude,
+          },
+          'timestamp': event.timestamp.toIso8601String(),
+        });
+      }
+      
+      // Format manual tickets
+      for (var ticket in manualTickets) {
+        allFormattedEvents.add({
+          'type': 'manual_ticket',
+          'offline_id': ticket.offlineId,
+          'bus_id': ticket.busId,
+          'passenger_count': ticket.passengerCount,
+          'fare': ticket.fare,
+          'payment_method': 'cash', // Default
+          'location': {
+            'lat': ticket.latitude,
+            'lng': ticket.longitude,
+          },
+          'timestamp': ticket.timestamp.toIso8601String(),
+        });
+      }
 
       // Sync in batches
       int syncedCount = 0;
       int failedCount = 0;
       final results = <SyncResult>[];
 
-      for (int i = 0; i < allEvents.length; i += batchSize) {
-        final batch = allEvents.skip(i).take(batchSize).toList();
+      for (int i = 0; i < allFormattedEvents.length; i += batchSize) {
+        final batch = allFormattedEvents.skip(i).take(batchSize).toList();
         
         try {
           final syncResponse = await _apiService.syncEvents(batch);
           
           // Process results
-          for (var event in batch) {
-            if (event.offlineId != null) {
+          for (var eventData in batch) {
+            final offlineId = eventData['offline_id'] as String?;
+            if (offlineId != null) {
               final result = syncResponse.results.firstWhere(
-                (r) => r.offlineId == event.offlineId,
+                (r) => r.offlineId == offlineId,
                 orElse: () => SyncResult(
-                  offlineId: event.offlineId!,
+                  offlineId: offlineId,
                   success: true,
                   status: 'success',
                 ),
@@ -79,7 +108,12 @@ class SyncService {
               results.add(result);
               
               if (result.success || result.status == 'success' || result.status == 'duplicate') {
-                await _localDB.markNFCLogSynced(event.offlineId!, null);
+                // Mark as synced based on event type
+                if (eventData['type'] == 'manual_ticket') {
+                  await _localDB.markManualTicketSynced(offlineId, null);
+                } else {
+                  await _localDB.markNFCLogSynced(offlineId, null);
+                }
                 syncedCount++;
               } else {
                 failedCount++;
@@ -88,10 +122,11 @@ class SyncService {
           }
         } catch (e) {
           // Mark entire batch as failed
-          for (var event in batch) {
-            if (event.offlineId != null) {
+          for (var eventData in batch) {
+            final offlineId = eventData['offline_id'] as String?;
+            if (offlineId != null) {
               results.add(SyncResult(
-                offlineId: event.offlineId!,
+                offlineId: offlineId,
                 success: false,
                 status: 'error',
                 error: e.toString(),

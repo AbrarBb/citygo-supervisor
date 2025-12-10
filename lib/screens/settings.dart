@@ -98,6 +98,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const Divider(height: 1),
                 ListTile(
+                  leading: const Icon(Icons.credit_card, color: AppTheme.textSecondary),
+                  title: const Text(
+                    'Registered Cards',
+                    style: TextStyle(color: AppTheme.textPrimary),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/registered-cards');
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
                   leading: const Icon(Icons.logout, color: AppTheme.errorColor),
                   title: const Text(
                     'Logout',

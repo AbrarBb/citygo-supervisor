@@ -53,20 +53,37 @@ class _ManualTicketScreenState extends State<ManualTicketScreen> {
         timestamp: DateTime.now(),
       );
       
+      print('🎫 Issuing manual ticket...');
+      print('📦 Ticket data: busId=${ticket.busId}, passengers=${ticket.passengerCount}, fare=${ticket.fare}');
+      
       final result = await _apiService.issueManualTicket(ticket);
+
+      print('✅ Ticket issued successfully: ${result.ticketId}');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ticket issued successfully!'),
+          SnackBar(
+            content: Text(result.message ?? 'Ticket issued successfully!'),
             backgroundColor: AppTheme.successColor,
+            duration: const Duration(seconds: 3),
           ),
         );
         Navigator.pop(context, result);
       }
     } catch (e) {
+      print('❌ Error issuing ticket: $e');
+      
+      // Extract error message
+      String errorMessage = 'Failed to issue ticket';
+      if (e is Exception) {
+        errorMessage = e.toString().replaceFirst('Exception: ', '');
+      } else {
+        errorMessage = e.toString();
+      }
+      
       // Save to offline storage on error
       try {
+        print('💾 Attempting to save ticket offline...');
         final position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
         );
@@ -82,22 +99,26 @@ class _ManualTicketScreenState extends State<ManualTicketScreen> {
         );
         
         await _localDB.saveManualTicket(ticket);
+        print('✅ Ticket saved offline successfully');
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Saved offline: ${e.toString()}'),
+              content: Text('Saved offline. Will sync when connection is available.\nError: $errorMessage'),
               backgroundColor: AppTheme.warningColor,
+              duration: const Duration(seconds: 4),
             ),
           );
           Navigator.pop(context);
         }
       } catch (locationError) {
+        print('❌ Failed to save offline: $locationError');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error: ${e.toString()}'),
+              content: Text('Error: $errorMessage'),
               backgroundColor: AppTheme.errorColor,
+              duration: const Duration(seconds: 4),
             ),
           );
         }
@@ -160,7 +181,7 @@ class _ManualTicketScreenState extends State<ManualTicketScreen> {
                         color: AppTheme.textPrimary,
                       ),
                       decoration: InputDecoration(
-                        prefixText: '\$ ',
+                        prefixText: '৳ ',
                         prefixStyle: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -205,7 +226,7 @@ class _ManualTicketScreenState extends State<ManualTicketScreen> {
                       ),
                     ),
                     Text(
-                      '\$${_totalFare.toStringAsFixed(2)}',
+                      '৳${_totalFare.toStringAsFixed(2)}',
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,

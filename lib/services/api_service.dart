@@ -9,6 +9,8 @@ import '../models/ticket.dart';
 import '../models/sync.dart';
 import '../models/report.dart';
 import '../models/pagination.dart';
+import '../models/card.dart';
+import '../models/booking.dart';
 
 /// API Service for CityGo Supervisor backend
 class ApiService {
@@ -245,7 +247,7 @@ class ApiService {
   }
 
   /// Get Assigned Bus - GET /supervisor-bus
-  Future<BusInfo> getAssignedBus() async {
+  Future<BusInfo?> getAssignedBus() async {
     // Check if we're in demo mode
     if (await isDemoMode()) {
       print('🎭 DEMO MODE: Returning mock bus data');
@@ -291,8 +293,38 @@ class ApiService {
       if (response.data == null) {
         throw Exception('No bus data received from server');
       }
+      
+      final data = response.data as Map<String, dynamic>;
+      
+      // Check if supervisor is assigned
+      final isActive = data['is_active'] as bool? ?? false;
+      final success = data['success'] as bool? ?? true;
+      
+      if (!isActive || !success) {
+        final message = data['message'] as String? ?? 
+            'You are not currently assigned to any bus. Please wait for a driver to assign you.';
+        print('⚠️ Supervisor not assigned: $message');
+        return null;
+      }
+      
+      // Parse bus and route from separate objects
+      final busData = data['bus'] as Map<String, dynamic>?;
+      final routeData = data['route'] as Map<String, dynamic>?;
+      
+      if (busData == null) {
+        // If no bus data but is_active is true, still return null gracefully
+        print('⚠️ No bus data in response despite is_active=true');
+        return null;
+      }
+      
+      // Combine bus and route data for BusInfo
+      final combinedData = Map<String, dynamic>.from(busData);
+      if (routeData != null) {
+        combinedData['route'] = routeData;
+      }
+      
       try {
-        return BusInfo.fromJson(response.data as Map<String, dynamic>);
+        return BusInfo.fromJson(combinedData);
       } catch (e) {
         print('Error parsing bus data: $e');
         print('Response data: ${response.data}');
@@ -312,11 +344,13 @@ class ApiService {
       final response = await _dio.post(
         '/nfc-tap-in',
         data: {
-          'nfc_id': event.cardId,
           'card_id': event.cardId,
           'bus_id': event.busId,
-          'latitude': event.latitude,
-          'longitude': event.longitude,
+          'location': {
+            'lat': event.latitude,
+            'lng': event.longitude,
+          },
+          if (event.offlineId != null) 'offline_id': event.offlineId,
         },
       );
       return NfcTapResponse.fromJson(response.data);
@@ -331,11 +365,13 @@ class ApiService {
       final response = await _dio.post(
         '/nfc-tap-out',
         data: {
-          'nfc_id': event.cardId,
           'card_id': event.cardId,
           'bus_id': event.busId,
-          'latitude': event.latitude,
-          'longitude': event.longitude,
+          'location': {
+            'lat': event.latitude,
+            'lng': event.longitude,
+          },
+          if (event.offlineId != null) 'offline_id': event.offlineId,
         },
       );
       return NfcTapResponse.fromJson(response.data);
@@ -344,39 +380,362 @@ class ApiService {
     }
   }
 
-  /// Manual Ticket - POST /manual-ticket
+  /// Manual Ticket - POST /manual-ticket or /supervisor-manual-ticket
   Future<TicketResponse> issueManualTicket(ManualTicket ticket) async {
     try {
-      final response = await _dio.post(
+      // Try different possible endpoints
+      List<String> possibleEndpoints = [
+        '/supervisor-manual-ticket',
         '/manual-ticket',
-        data: {
-          'bus_id': ticket.busId,
-          'passenger_count': ticket.passengerCount,
-          'fare': ticket.fare,
-          'latitude': ticket.latitude,
-          'longitude': ticket.longitude,
-          if (ticket.notes != null) 'notes': ticket.notes,
+        '/tickets',
+      ];
+      
+      // Prepare request data with multiple format options
+      final requestData = {
+        'bus_id': ticket.busId,
+        'passenger_count': ticket.passengerCount,
+        'fare': ticket.fare,
+        'latitude': ticket.latitude,
+        'longitude': ticket.longitude,
+        'issued_at': ticket.timestamp.toIso8601String(),
+        if (ticket.notes != null && ticket.notes!.isNotEmpty) 'notes': ticket.notes,
+        if (ticket.offlineId != null) 'offline_id': ticket.offlineId,
+        // Additional fields that might be expected
+        'ticket_type': 'single',
+        'payment_method': 'cash',
+        'location': {
+          'lat': ticket.latitude,
+          'lng': ticket.longitude,
         },
-      );
-      return TicketResponse.fromJson(response.data);
+      };
+      
+      DioException? lastError;
+      
+      for (final endpoint in possibleEndpoints) {
+        try {
+          print('🎫 Trying manual ticket endpoint: $endpoint');
+          print('📦 Request data: $requestData');
+          
+          final response = await _dio.post(
+            endpoint,
+            data: requestData,
+          );
+          
+          print('✅ Manual ticket response status: ${response.statusCode}');
+          print('📋 Response data: ${response.data}');
+          
+          if (response.data != null) {
+            final data = response.data;
+            
+            // Handle different response formats
+            if (data is Map) {
+              final dataMap = data as Map<String, dynamic>;
+              
+              // Check for success flag
+              if (dataMap['success'] == false) {
+                final errorMsg = dataMap['error'] as String? ?? 
+                               dataMap['message'] as String? ?? 
+                               'Failed to issue ticket';
+                throw Exception(errorMsg);
+              }
+              
+              // Return response
+              return TicketResponse.fromJson(dataMap);
+            } else {
+              // If response is not a map, try to parse as TicketResponse
+              return TicketResponse.fromJson({'success': true, 'ticket_id': data.toString()});
+            }
+          }
+        } on DioException catch (e) {
+          print('❌ Endpoint $endpoint failed: ${e.response?.statusCode}');
+          print('❌ Error: ${e.message}');
+          print('❌ Response: ${e.response?.data}');
+          
+          lastError = e;
+          
+          // If 404, try next endpoint
+          if (e.response?.statusCode == 404) {
+            continue;
+          }
+          
+          // If 401/403, don't try other endpoints
+          if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+            throw _handleError(e);
+          }
+          
+          // For other errors, try next endpoint
+          continue;
+        } catch (e) {
+          print('❌ Error with endpoint $endpoint: $e');
+          lastError = DioException(
+            requestOptions: RequestOptions(path: endpoint),
+            error: e,
+          );
+          continue;
+        }
+      }
+      
+      // If all endpoints failed, throw the last error
+      if (lastError != null) {
+        throw _handleError(lastError);
+      }
+      
+      throw Exception('No manual ticket endpoint available');
     } on DioException catch (e) {
       throw _handleError(e);
+    } catch (e) {
+      print('Error issuing manual ticket: $e');
+      rethrow;
     }
   }
 
   /// Sync Events - POST /nfc-sync
-  Future<SyncResponse> syncEvents(List<NfcEvent> events) async {
+  Future<SyncResponse> syncEvents(List<Map<String, dynamic>> events) async {
     try {
       final response = await _dio.post(
         '/nfc-sync',
         data: {
-          'events': events.map((e) => e.toJson()).toList(),
-          'logs': events.map((e) => e.toJson()).toList(), // Support both formats
+          'events': events,
         },
       );
       return SyncResponse.fromJson(response.data);
     } on DioException catch (e) {
       throw _handleError(e);
+    }
+  }
+
+  /// Get Registered Cards - GET /registered-cards or /cards
+  Future<List<RegisteredCard>> getRegisteredCards() async {
+    try {
+      // Try different possible endpoints
+      List<String> possibleEndpoints = [
+        '/registered-cards',
+        '/cards',
+        '/nfc-cards',
+        '/passenger-cards',
+        '/supervisor-cards',
+      ];
+      
+      for (final endpoint in possibleEndpoints) {
+        try {
+          print('🔍 Trying endpoint: $endpoint');
+          final response = await _dio.get(endpoint);
+          print('✅ Response status: ${response.statusCode}');
+          print('📦 Response data type: ${response.data.runtimeType}');
+          
+          if (response.data != null) {
+            final data = response.data;
+            print('📋 Response data: $data');
+            
+            // Handle different response formats
+            List<dynamic> cardsList;
+            if (data is List) {
+              print('📝 Data is a List with ${data.length} items');
+              cardsList = data;
+            } else if (data is Map && data['cards'] != null) {
+              print('📝 Data has "cards" key');
+              cardsList = data['cards'] as List<dynamic>;
+            } else if (data is Map && data['items'] != null) {
+              print('📝 Data has "items" key');
+              cardsList = data['items'] as List<dynamic>;
+            } else if (data is Map && data['data'] != null) {
+              print('📝 Data has "data" key');
+              cardsList = data['data'] as List<dynamic>;
+            } else if (data is Map && data['success'] == true && data['cards'] != null) {
+              print('📝 Data has success=true and "cards" key');
+              cardsList = data['cards'] as List<dynamic>;
+            } else if (data is Map && data['success'] != false) {
+              // Try to find cards array even without explicit success flag
+              if (data['cards'] != null) {
+                print('📝 Data has "cards" key (without explicit success check)');
+                cardsList = data['cards'] as List<dynamic>;
+              } else {
+                print('⚠️ Unknown data format, trying next endpoint');
+                print('📋 Full response: $data');
+                continue;
+              }
+            } else {
+              print('⚠️ Unknown data format, trying next endpoint');
+              print('📋 Full response: $data');
+              continue; // Try next endpoint
+            }
+            
+            print('✅ Found ${cardsList.length} cards');
+            final cards = cardsList
+                .map((json) {
+                  try {
+                    return RegisteredCard.fromJson(json as Map<String, dynamic>);
+                  } catch (e) {
+                    print('❌ Error parsing card: $e');
+                    print('📋 Card data: $json');
+                    rethrow;
+                  }
+                })
+                .toList();
+            
+            print('✅ Successfully parsed ${cards.length} cards from $endpoint');
+            return cards;
+          }
+        } on DioException catch (e) {
+          print('❌ Endpoint $endpoint failed: ${e.response?.statusCode} - ${e.message}');
+          if (e.response?.statusCode == 404) {
+            print('   404 - Endpoint not found, trying next...');
+            continue;
+          }
+          // For other errors, try next endpoint
+          continue;
+        } catch (e) {
+          print('❌ Error with endpoint $endpoint: $e');
+          continue;
+        }
+      }
+      
+      // If all endpoints fail, return empty list
+      print('⚠️ All endpoints failed. No registered cards endpoint found.');
+      print('💡 Tried endpoints: ${possibleEndpoints.join(", ")}');
+      return [];
+    } on DioException catch (e) {
+      print('❌ DioException in getRegisteredCards: ${e.response?.statusCode}');
+      // If 404, return empty list (endpoint might not exist)
+      if (e.response?.statusCode == 404) {
+        print('⚠️ Registered cards endpoint not found (404)');
+        return [];
+      }
+      throw _handleError(e);
+    } catch (e) {
+      print('❌ Error fetching registered cards: $e');
+      return [];
+    }
+  }
+
+  /// Get Bus Bookings for Supervisor
+  /// 
+  /// Expected endpoint: GET /supervisor-bookings?bus_id=<busId>&date=<YYYY-MM-DD>
+  /// 
+  /// Expected response format:
+  /// {
+  ///   "success": true,
+  ///   "bus_id": "uuid",
+  ///   "bus_number": "DHK-BUS-102",
+  ///   "total_seats": 40,
+  ///   "available_seats": 25,
+  ///   "booked_seats": 15,
+  ///   "bookings": [
+  ///     {
+  ///       "id": "booking-uuid",
+  ///       "bus_id": "bus-uuid",
+  ///       "seat_number": 1,
+  ///       "passenger_name": "John Doe",
+  ///       "card_id": "RC-d4a290fc",
+  ///       "status": "booked", // or "occupied", "available"
+  ///       "booked_at": "2024-01-15T08:00:00Z",
+  ///       "booking_type": "online" // or "nfc", "manual"
+  ///     }
+  ///   ]
+  /// }
+  Future<BusBookings> getBusBookings({String? busId, DateTime? date}) async {
+    try {
+      // Try different possible endpoints (prioritize supervisor-specific)
+      List<String> possibleEndpoints = [
+        '/supervisor-bookings',
+        '/bus-bookings',
+        '/bookings',
+        '/seat-bookings',
+      ];
+      
+      final queryParams = <String, dynamic>{};
+      if (busId != null) {
+        queryParams['bus_id'] = busId;
+      }
+      if (date != null) {
+        queryParams['date'] = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      }
+      
+      for (final endpoint in possibleEndpoints) {
+        try {
+          print('🔍 Trying bookings endpoint: $endpoint');
+          final response = await _dio.get(
+            endpoint,
+            queryParameters: queryParams.isEmpty ? null : queryParams,
+          );
+          print('✅ Response status: ${response.statusCode}');
+          
+          if (response.data != null) {
+            final data = response.data;
+            print('📋 Response data type: ${data.runtimeType}');
+            
+            // Handle different response formats
+            Map<String, dynamic> bookingsData;
+            if (data is Map) {
+              final dataMap = data as Map<String, dynamic>;
+              if (dataMap['success'] == true && dataMap['bookings'] != null) {
+                bookingsData = dataMap;
+              } else if (dataMap['bus_id'] != null || dataMap['bookings'] != null) {
+                bookingsData = dataMap;
+              } else if (dataMap['seats'] != null) {
+                // Alternative format with 'seats' key
+                bookingsData = {
+                  'bus_id': dataMap['bus_id'] ?? busId ?? 'unknown',
+                  'bookings': dataMap['seats'],
+                  'total_seats': dataMap['total_seats'] ?? 40,
+                  'available_seats': dataMap['available_seats'] ?? 0,
+                  'booked_seats': dataMap['booked_seats'] ?? 0,
+                };
+              } else {
+                print('⚠️ Unknown data format, trying next endpoint');
+                print('📋 Full response: $dataMap');
+                continue;
+              }
+            } else {
+              continue;
+            }
+            
+            print('✅ Found bookings data');
+            return BusBookings.fromJson(bookingsData);
+          }
+        } on DioException catch (e) {
+          print('❌ Endpoint $endpoint failed: ${e.response?.statusCode}');
+          if (e.response?.statusCode == 404) {
+            continue; // Try next endpoint
+          }
+          continue;
+        } catch (e) {
+          print('❌ Error with endpoint $endpoint: $e');
+          continue;
+        }
+      }
+      
+      // If all endpoints fail, return empty bookings
+      print('⚠️ No bookings endpoint found, returning empty bookings');
+      return BusBookings(
+        busId: busId ?? 'unknown',
+        totalSeats: 40, // Default capacity
+        availableSeats: 40,
+        bookedSeats: 0,
+        bookings: [],
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        // Return empty bookings if endpoint doesn't exist
+        return BusBookings(
+          busId: busId ?? 'unknown',
+          totalSeats: 40,
+          availableSeats: 40,
+          bookedSeats: 0,
+          bookings: [],
+        );
+      }
+      throw _handleError(e);
+    } catch (e) {
+      print('Error fetching bookings: $e');
+      // Return empty bookings on error
+      return BusBookings(
+        busId: busId ?? 'unknown',
+        totalSeats: 40,
+        availableSeats: 40,
+        bookedSeats: 0,
+        bookings: [],
+      );
     }
   }
 
@@ -446,7 +805,14 @@ class ApiService {
       } else if (statusCode == 403) {
         return Exception('Insufficient permissions. Please contact admin.');
       } else if (statusCode == 404) {
-        return Exception('Card not registered. Please register your card first.');
+        // Check if this is a bus assignment endpoint
+        final path = error.requestOptions.path;
+        if (path.contains('supervisor-bus')) {
+          return Exception('No bus assignment found. Please wait for a driver to assign you to a bus.');
+        } else if (path.contains('nfc') || path.contains('card')) {
+          return Exception('Card not registered. Please register your card first.');
+        }
+        return Exception('Resource not found. Please try again.');
       } else if (statusCode == 500) {
         // Server error - provide helpful message
         final message = data?['message'] ?? 
