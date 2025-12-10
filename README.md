@@ -85,7 +85,7 @@ In Xcode, enable **Near Field Communication Tag Reading** capability.
 Run with Google Maps API key:
 
 ```bash
-flutter run --dart-define=GOOGLE_MAPS_API_KEY=AIzaSyANU6LkHDgyHNjIIYfQV3YsnQ9Do_5uMGE
+flutter run --dart-define=GOOGLE_MAPS_API_KEY
 ```
 
 Or specify a device:
@@ -113,7 +113,7 @@ flutter build ios --dart-define=GOOGLE_MAPS_API_KEY=YOUR_KEY
 ## Test Credentials
 
 - **Email**: `testsup@gmail.com`
-- **Password**: `Test123!`
+- **Password**: `123456`
 
 ## Test NFC Cards
 
