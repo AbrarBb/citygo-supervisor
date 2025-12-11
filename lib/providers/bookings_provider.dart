@@ -39,12 +39,26 @@ final busBookingsProvider = FutureProvider.family<BusBookings?, String>((ref, bu
   }
   
   try {
+    // Don't filter by date - get all bookings for the bus
+    // The backend will return bookings based on travel_date
+    print('📅 Fetching bookings for bus: $busId (no date filter)');
+    print('📅 Bus ID type: ${busId.runtimeType}, value: "$busId"');
+    print('📅 Bus capacity from provider: $busCapacity');
+    
     final bookings = await apiService.getBusBookings(
       busId: busId,
-      date: DateTime.now(),
+      // Don't pass date - let backend return all bookings
+      // date: null, // Get all bookings, not just today's
     ).timeout(
-      const Duration(seconds: 5),
+      const Duration(seconds: 10),
     );
+    
+    print('✅ Received bookings: ${bookings.bookings.length} total');
+    print('📊 Booked seats: ${bookings.bookedSeats}, Available: ${bookings.availableSeats}');
+    print('📊 Bus ID in response: ${bookings.busId}');
+    if (bookings.busId != busId) {
+      print('⚠️ WARNING: Bus ID mismatch! Requested: $busId, Received: ${bookings.busId}');
+    }
     
     // Update total seats from bus capacity if not provided
     if (bookings.totalSeats == 0 || bookings.totalSeats != busCapacity) {

@@ -69,6 +69,18 @@ class BookingsScreen extends ConsumerWidget {
             );
           }
 
+          // Debug: Print booking data
+          print('📊 BookingsScreen: Received ${bookings.bookings.length} bookings');
+          print('📊 Total seats: ${bookings.totalSeats}, Booked: ${bookings.bookedSeats}, Available: ${bookings.availableSeats}');
+          if (bookings.bookings.isNotEmpty) {
+            print('📋 All bookings:');
+            for (var b in bookings.bookings) {
+              print('   - Seat ${b.seatNumber}: ${b.passengerName ?? "Unknown"} (${b.status})');
+            }
+          } else {
+            print('⚠️ No bookings in the list!');
+          }
+
           return RefreshIndicator(
             onRefresh: () async {
               ref.invalidate(busBookingsProvider(busId));
@@ -79,6 +91,9 @@ class BookingsScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Debug Info Card (always show for debugging)
+                  _buildDebugCard(bookings),
+                  
                   // Stats Cards
                   _buildStatsCards(bookings),
                   
@@ -151,20 +166,25 @@ class BookingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.all(AppTheme.spacingMD),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.event_seat,
                       color: AppTheme.primaryBlue,
-                      size: 20,
+                      size: 18,
                     ),
-                    const SizedBox(width: AppTheme.spacingXS),
-                    Text(
-                      'Total Seats',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textSecondary,
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Total Seats',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -173,7 +193,7 @@ class BookingsScreen extends ConsumerWidget {
                 Text(
                   '${bookings.totalSeats}',
                   style: const TextStyle(
-                    fontSize: 24,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: AppTheme.textPrimary,
                   ),
@@ -188,20 +208,25 @@ class BookingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.all(AppTheme.spacingMD),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.check_circle,
                       color: AppTheme.primaryGreen,
-                      size: 20,
+                      size: 18,
                     ),
-                    const SizedBox(width: AppTheme.spacingXS),
-                    Text(
-                      'Booked',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textSecondary,
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Booked',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -210,7 +235,7 @@ class BookingsScreen extends ConsumerWidget {
                 Text(
                   '${bookings.bookedSeats}',
                   style: const TextStyle(
-                    fontSize: 24,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: AppTheme.textPrimary,
                   ),
@@ -225,20 +250,25 @@ class BookingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.all(AppTheme.spacingMD),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.event_available,
                       color: AppTheme.accentCyanReal,
-                      size: 20,
+                      size: 18,
                     ),
-                    const SizedBox(width: AppTheme.spacingXS),
-                    Text(
-                      'Available',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textSecondary,
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Available',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -247,7 +277,7 @@ class BookingsScreen extends ConsumerWidget {
                 Text(
                   '${bookings.availableSeats}',
                   style: const TextStyle(
-                    fontSize: 24,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: AppTheme.textPrimary,
                   ),
@@ -261,16 +291,60 @@ class BookingsScreen extends ConsumerWidget {
   }
 
   Widget _buildSeatMap(BusBookings bookings) {
+    print('🗺️ Building seat map: ${bookings.totalSeats} total seats, ${bookings.bookings.length} bookings');
+    
+    // Log all bookings with their details
+    if (bookings.bookings.isNotEmpty) {
+      print('📋 All bookings details:');
+      for (var b in bookings.bookings) {
+        print('   - ID: ${b.id}, Seat: ${b.seatNumber}, Name: ${b.passengerName ?? "N/A"}, Status: ${b.status}, BusId: ${b.busId}');
+        
+        // Warn if seat number is out of range
+        if (b.seatNumber < 1 || b.seatNumber > bookings.totalSeats) {
+          print('   ⚠️ WARNING: Seat ${b.seatNumber} is out of range (1-${bookings.totalSeats})');
+        }
+        if (b.seatNumber == 0) {
+          print('   ⚠️ WARNING: Seat number is 0 (invalid)');
+        }
+      }
+    } else {
+      print('⚠️ No bookings found in the list!');
+    }
+    
+    // Filter out bookings with invalid seat numbers (0 or out of range)
+    final validBookings = bookings.bookings.where((b) => 
+      b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats
+    ).toList();
+    
+    if (validBookings.length < bookings.bookings.length) {
+      final invalidCount = bookings.bookings.length - validBookings.length;
+      print('⚠️ Filtered out $invalidCount bookings with invalid seat numbers');
+    }
+    
     // Create a map of seat numbers to bookings
-    final seatMap = <int, SeatBooking?>{};
+    final seatMap = <int, SeatBooking?>{}; 
     for (int i = 1; i <= bookings.totalSeats; i++) {
       try {
-        seatMap[i] = bookings.bookings.firstWhere(
+        final booking = validBookings.firstWhere(
           (b) => b.seatNumber == i,
         );
+        seatMap[i] = booking;
+        print('   ✅ Seat $i: ${booking.passengerName ?? "Unknown"} (${booking.status})');
       } catch (e) {
         // Seat is available - no booking found
         seatMap[i] = null;
+      }
+    }
+    
+    final bookedCount = seatMap.values.where((b) => b != null).length;
+    print('🗺️ Seat map created: $bookedCount booked seats out of ${bookings.totalSeats} total');
+    
+    if (bookedCount == 0 && bookings.bookings.isNotEmpty) {
+      print('⚠️ WARNING: Bookings exist but no seats matched!');
+      print('   This might indicate a seat number mismatch.');
+      print('   Valid bookings after filtering: ${validBookings.length}');
+      if (validBookings.isNotEmpty) {
+        print('   Valid booking seat numbers: ${validBookings.map((b) => b.seatNumber).join(", ")}');
       }
     }
 
@@ -310,8 +384,11 @@ class BookingsScreen extends ConsumerWidget {
             children: seatMap.entries.map((entry) {
               final seatNum = entry.key;
               final booking = entry.value;
+              final status = booking?.status.toLowerCase() ?? '';
               final isBooked = booking != null && 
-                             (booking.status == 'booked' || booking.status == 'occupied');
+                             (status == 'booked' || 
+                              status == 'occupied' || 
+                              status == 'confirmed');
               
               return _buildSeatWidget(seatNum, booking, isBooked);
             }).toList(),
@@ -351,7 +428,8 @@ class BookingsScreen extends ConsumerWidget {
     
     Color seatColor;
     if (isBooked) {
-      seatColor = booking?.status == 'occupied' 
+      final status = booking?.status.toLowerCase() ?? '';
+      seatColor = status == 'occupied' 
           ? AppTheme.primaryBlue 
           : AppTheme.primaryGreen;
     } else {
@@ -397,12 +475,36 @@ class BookingsScreen extends ConsumerWidget {
   }
 
   Widget _buildBookingsList(BusBookings bookings) {
-    final bookedSeats = bookings.bookings
-        .where((b) => b.status == 'booked' || b.status == 'occupied')
-        .toList()
-      ..sort((a, b) => a.seatNumber.compareTo(b.seatNumber));
+    // Show ALL bookings, not just filtered ones - helps with debugging
+    // Include all bookings regardless of status (booked, occupied, confirmed, or any other)
+    final allBookings = bookings.bookings.toList()
+      ..sort((a, b) {
+        // Sort by seat number, but put invalid seats (0 or out of range) at the end
+        if (a.seatNumber <= 0 || a.seatNumber > bookings.totalSeats) return 1;
+        if (b.seatNumber <= 0 || b.seatNumber > bookings.totalSeats) return -1;
+        return a.seatNumber.compareTo(b.seatNumber);
+      });
+    
+    // Separate valid and invalid bookings
+    final validBookings = allBookings.where((b) => 
+      b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats
+    ).toList();
+    final invalidBookings = allBookings.where((b) => 
+      b.seatNumber <= 0 || b.seatNumber > bookings.totalSeats
+    ).toList();
+    
+    print('📋 _buildBookingsList: ${allBookings.length} total bookings');
+    print('   - Valid seat numbers (1-${bookings.totalSeats}): ${validBookings.length}');
+    print('   - Invalid seat numbers: ${invalidBookings.length}');
+    if (invalidBookings.isNotEmpty) {
+      print('   - Invalid bookings: ${invalidBookings.map((b) => 'Seat ${b.seatNumber}').join(", ")}');
+    }
+    if (allBookings.isNotEmpty) {
+      print('📋 All bookings: ${allBookings.map((b) => 'Seat ${b.seatNumber} (${b.status})').join(", ")}');
+    }
 
-    if (bookedSeats.isEmpty) {
+    // Show message if no bookings at all
+    if (allBookings.isEmpty) {
       return CityGoCard(
         padding: const EdgeInsets.all(AppTheme.spacingMD),
         child: Center(
@@ -456,12 +558,134 @@ class BookingsScreen extends ConsumerWidget {
           ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: bookedSeats.length,
+            itemCount: allBookings.length,
             itemBuilder: (context, index) {
-              final booking = bookedSeats[index];
+              final booking = allBookings[index];
               return _buildBookingItem(booking);
             },
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDebugCard(BusBookings bookings) {
+    final validBookings = bookings.bookings.where((b) => 
+      b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats
+    ).toList();
+    final invalidBookings = bookings.bookings.where((b) => 
+      b.seatNumber <= 0 || b.seatNumber > bookings.totalSeats
+    ).toList();
+    
+    return CityGoCard(
+      padding: const EdgeInsets.all(AppTheme.spacingMD),
+      margin: const EdgeInsets.only(bottom: AppTheme.spacingMD),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.bug_report, color: AppTheme.accentCyanReal, size: 20),
+              const SizedBox(width: AppTheme.spacingXS),
+              const Text(
+                'Debug Info',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTheme.spacingSM),
+          Text(
+            'Bus ID: ${bookings.busId}',
+            style: const TextStyle(fontSize: 11, color: AppTheme.textTertiary, fontFamily: 'monospace'),
+          ),
+          Text(
+            'Total Seats: ${bookings.totalSeats}',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          Text(
+            'Total Bookings Received: ${bookings.bookings.length}',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          Text(
+            'Valid Bookings (1-${bookings.totalSeats}): ${validBookings.length}',
+            style: TextStyle(
+              fontSize: 12, 
+              color: validBookings.isEmpty ? AppTheme.errorColor : AppTheme.primaryGreen,
+            ),
+          ),
+          if (invalidBookings.isNotEmpty)
+            Text(
+              'Invalid Bookings: ${invalidBookings.length}',
+              style: const TextStyle(fontSize: 12, color: AppTheme.errorColor),
+            ),
+          Text(
+            'Booked Seats (from API): ${bookings.bookedSeats}',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          Text(
+            'Available Seats: ${bookings.availableSeats}',
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          if (bookings.bookings.isNotEmpty) ...[
+            const SizedBox(height: AppTheme.spacingSM),
+            const Divider(),
+            const SizedBox(height: AppTheme.spacingSM),
+            const Text(
+              'Raw Bookings Data:',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+            ),
+            const SizedBox(height: AppTheme.spacingXS),
+            ...bookings.bookings.take(5).map((b) => Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Seat ${b.seatNumber}: ${b.passengerName ?? "N/A"} (${b.status})',
+                    style: TextStyle(
+                      fontSize: 11, 
+                      color: (b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats) 
+                          ? AppTheme.textSecondary 
+                          : AppTheme.errorColor,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  if (b.seatNumber <= 0 || b.seatNumber > bookings.totalSeats)
+                    Text(
+                      '  ⚠️ Invalid seat number!',
+                      style: const TextStyle(fontSize: 10, color: AppTheme.errorColor),
+                    ),
+                ],
+              ),
+            )),
+            if (bookings.bookings.length > 5)
+              Text(
+                '... and ${bookings.bookings.length - 5} more',
+                style: const TextStyle(fontSize: 11, color: AppTheme.textTertiary),
+              ),
+          ] else ...[
+            const SizedBox(height: AppTheme.spacingSM),
+            const Divider(),
+            const SizedBox(height: AppTheme.spacingSM),
+            Text(
+              '⚠️ No bookings received from API',
+              style: const TextStyle(fontSize: 12, color: AppTheme.errorColor),
+            ),
+            const SizedBox(height: AppTheme.spacingXS),
+            const Text(
+              'Check:\n'
+              '1. Backend endpoint /supervisor-bookings exists\n'
+              '2. Bus ID matches supervisor\'s assigned bus\n'
+              '3. Bookings exist in database for this bus\n'
+              '4. Response includes "bookings" array\n'
+              '5. Each booking has seat_number (1-40) and status="confirmed"',
+              style: TextStyle(fontSize: 11, color: AppTheme.textTertiary),
+            ),
+          ],
         ],
       ),
     );

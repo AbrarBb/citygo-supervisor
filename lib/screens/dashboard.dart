@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +12,7 @@ import '../providers/bus_provider.dart';
 import '../providers/sync_provider.dart';
 import '../providers/report_provider.dart';
 import '../models/report.dart';
+import '../models/bus.dart';
 import 'nfc_reader.dart';
 import 'manual_ticket.dart';
 import 'bookings.dart';
@@ -26,14 +30,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _isTripActive = false;
   Position? _currentPosition;
   GoogleMapController? _mapController;
+  Timer? _busLocationRefreshTimer;
+  BitmapDescriptor? _busIcon;
 
   @override
   void initState() {
     super.initState();
-    // Set default location immediately so map can render
+    // Set default location immediately so map can render (Gulshan, Dhaka - on land)
     _currentPosition = Position(
-      latitude: 23.8103, // Dhaka default
-      longitude: 90.4125,
+      latitude: 23.7947, // Dhaka city center (Gulshan)
+      longitude: 90.4144,
       timestamp: DateTime.now(),
       accuracy: 0,
       altitude: 0,
@@ -45,6 +51,109 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
     // Try to get actual location in background
     _getCurrentLocation();
+    
+    // Start periodic refresh of bus location (every 10 seconds)
+    _startBusLocationRefresh();
+    
+    // Create custom bus icon
+    _createBusIcon();
+  }
+
+  /// Create a custom bus icon for the map marker
+  Future<void> _createBusIcon() async {
+    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(pictureRecorder);
+    final Size size = const Size(50, 50);
+    
+    // Draw background circle
+    final Paint backgroundPaint = Paint()
+      ..color = AppTheme.primaryGreen
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      size.width / 2,
+      backgroundPaint,
+    );
+    
+    // Draw white border
+    final Paint borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      size.width / 2 - 1,
+      borderPaint,
+    );
+    
+    // Draw bus icon using a simple shape
+    final Paint busPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    
+    // Draw bus body (rectangle with rounded corners)
+    final RRect busBody = RRect.fromRectAndRadius(
+      Rect.fromLTWH(size.width * 0.15, size.height * 0.25, size.width * 0.7, size.height * 0.5),
+      const Radius.circular(5),
+    );
+    canvas.drawRRect(busBody, busPaint);
+    
+    // Draw windows (two rectangles)
+    final Paint windowPaint = Paint()
+      ..color = AppTheme.primaryGreen
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.25, size.height * 0.35, size.width * 0.2, size.height * 0.15),
+        const Radius.circular(2),
+      ),
+      windowPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.55, size.height * 0.35, size.width * 0.2, size.height * 0.15),
+        const Radius.circular(2),
+      ),
+      windowPaint,
+    );
+    
+    // Draw wheels (two circles)
+    final Paint wheelPaint = Paint()
+      ..color = Colors.black87
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.3, size.height * 0.8), size.width * 0.08, wheelPaint);
+    canvas.drawCircle(Offset(size.width * 0.7, size.height * 0.8), size.width * 0.08, wheelPaint);
+    
+    // Convert to image
+    final ui.Picture picture = pictureRecorder.endRecording();
+    final ui.Image image = await picture.toImage(size.width.toInt(), size.height.toInt());
+    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final Uint8List uint8List = byteData!.buffer.asUint8List();
+    
+    // Create BitmapDescriptor
+    _busIcon = BitmapDescriptor.fromBytes(uint8List);
+    
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _busLocationRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startBusLocationRefresh() {
+    // Refresh bus location every 10 seconds to get live updates
+    _busLocationRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (mounted) {
+        // Refresh bus provider to get latest location
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          ref.invalidate(busProvider);
+        });
+      }
+    });
   }
 
   Future<void> _getCurrentLocation() async {
@@ -58,8 +167,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         onTimeout: () {
           // Use default location (Dhaka) if location request times out
           return Position(
-            latitude: 23.8103,
-            longitude: 90.4125,
+            latitude: 23.7947,
+            longitude: 90.4144,
             timestamp: DateTime.now(),
             accuracy: 0,
             altitude: 0,
@@ -84,8 +193,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       // Use default location (Dhaka) on error
       setState(() {
         _currentPosition = Position(
-          latitude: 23.8103,
-          longitude: 90.4125,
+          latitude: 23.7947,
+          longitude: 90.4144,
           timestamp: DateTime.now(),
           accuracy: 0,
           altitude: 0,
@@ -578,21 +687,119 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   Widget _buildMapContainer(busInfo) {
     final stops = busInfo.route?.stops ?? [];
-    final polylinePoints = stops
+    
+    // Filter out stops with invalid coordinates and sort by order
+    final validStops = stops
+        .where((stop) => 
+            stop.latitude != 0.0 && 
+            stop.longitude != 0.0 &&
+            stop.latitude.abs() <= 90 &&
+            stop.longitude.abs() <= 180)
+        .toList();
+    
+    // Sort stops by order if available
+    if (validStops.any((stop) => stop.order != null)) {
+      validStops.sort((Stop a, Stop b) {
+        final orderA = a.order ?? 999;
+        final orderB = b.order ?? 999;
+        return orderA.compareTo(orderB);
+      });
+    }
+    
+    final polylinePoints = validStops
         .map<LatLng>((stop) => LatLng(stop.latitude, stop.longitude))
         .toList();
 
     // Debug logging
     print('🗺️ Map Debug: BusInfo route: ${busInfo.route != null}');
-    print('🗺️ Map Debug: Stops count: ${stops.length}');
-    if (stops.isNotEmpty) {
-      print('🗺️ Map Debug: First stop: ${stops.first.name} at ${stops.first.latitude}, ${stops.first.longitude}');
+    print('🗺️ Map Debug: Total stops: ${stops.length}');
+    print('🗺️ Map Debug: Valid stops: ${validStops.length}');
+    print('🗺️ Map Debug: Polyline points: ${polylinePoints.length}');
+    if (validStops.isNotEmpty) {
+      print('🗺️ Map Debug: First stop: ${validStops.first.name} at ${validStops.first.latitude}, ${validStops.first.longitude}');
+      print('🗺️ Map Debug: Last stop: ${validStops.last.name} at ${validStops.last.latitude}, ${validStops.last.longitude}');
+    } else if (stops.isNotEmpty) {
+      print('⚠️ Map Debug: All stops have invalid coordinates!');
+      for (var stop in stops) {
+        print('   - ${stop.name}: lat=${stop.latitude}, lng=${stop.longitude}');
+      }
     }
 
-    final defaultLat = _currentPosition?.latitude ?? 
-        (stops.isNotEmpty ? stops.first.latitude : 23.8103);
-    final defaultLng = _currentPosition?.longitude ?? 
-        (stops.isNotEmpty ? stops.first.longitude : 90.4125);
+    // Determine map center - prioritize bus location, then stops, then current location, then default
+    double centerLat;
+    double centerLng;
+    double zoomLevel = 15.0;
+    
+    // Check if bus has live location
+    final busLocation = busInfo.currentLocation;
+    final hasBusLocation = busLocation != null &&
+        busLocation['lat'] != null &&
+        busLocation['lng'] != null &&
+        busLocation['lat'] != 0.0 &&
+        busLocation['lng'] != 0.0;
+    
+    if (hasBusLocation) {
+      // Prioritize bus location
+      centerLat = busLocation['lat']!;
+      centerLng = busLocation['lng']!;
+      zoomLevel = 14.0; // Good zoom level to see bus and nearby stops
+      
+      // If we have stops, adjust zoom to show both bus and route
+      if (validStops.isNotEmpty) {
+        // Calculate bounds to include both bus location and all stops
+        double minLat = centerLat;
+        double maxLat = centerLat;
+        double minLng = centerLng;
+        double maxLng = centerLng;
+        
+        for (var stop in validStops) {
+          minLat = minLat < stop.latitude ? minLat : stop.latitude;
+          maxLat = maxLat > stop.latitude ? maxLat : stop.latitude;
+          minLng = minLng < stop.longitude ? minLng : stop.longitude;
+          maxLng = maxLng > stop.longitude ? maxLng : stop.longitude;
+        }
+        
+        // Center on the midpoint
+        centerLat = (minLat + maxLat) / 2;
+        centerLng = (minLng + maxLng) / 2;
+        
+        // Adjust zoom based on bounds
+        final latDiff = maxLat - minLat;
+        final lngDiff = maxLng - minLng;
+        final maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
+        
+        if (maxDiff > 0.1) {
+          zoomLevel = 11.0; // Wide view for long routes
+        } else if (maxDiff > 0.05) {
+          zoomLevel = 12.0;
+        } else {
+          zoomLevel = 13.0;
+        }
+      }
+    } else if (validStops.isNotEmpty) {
+      // Use first stop as center
+      centerLat = validStops.first.latitude;
+      centerLng = validStops.first.longitude;
+      // If multiple stops, calculate center point
+      if (validStops.length > 1) {
+        double sumLat = 0, sumLng = 0;
+        for (var stop in validStops) {
+          sumLat += stop.latitude;
+          sumLng += stop.longitude;
+        }
+        centerLat = sumLat / validStops.length;
+        centerLng = sumLng / validStops.length;
+        zoomLevel = 12.0; // Zoom out more for multiple stops
+      }
+    } else if (_currentPosition != null) {
+      centerLat = _currentPosition!.latitude;
+      centerLng = _currentPosition!.longitude;
+    } else {
+      // Default to Dhaka city center (Gulshan area - definitely on land)
+      centerLat = 23.7947;
+      centerLng = 90.4144;
+      zoomLevel = 13.0; // City-level zoom to show streets
+    }
 
     return MapContainer(
       height: 300,
@@ -604,8 +811,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             try {
               return GoogleMap(
                 initialCameraPosition: CameraPosition(
-                  target: LatLng(defaultLat, defaultLng),
-                  zoom: 15,
+                  target: LatLng(centerLat, centerLng),
+                  zoom: zoomLevel,
                 ),
                 zoomControlsEnabled: false,
                 zoomGesturesEnabled: true,
@@ -655,12 +862,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       }
                     });
                   } else {
-                    print('⚠️ No polyline points available - centering on default location');
+                    print('⚠️ No polyline points available - centering on calculated location');
                     Future.delayed(const Duration(milliseconds: 500), () {
                       controller.animateCamera(
                         CameraUpdate.newLatLngZoom(
-                          LatLng(defaultLat, defaultLng),
-                          15,
+                          LatLng(centerLat, centerLng),
+                          zoomLevel,
                         ),
                       );
                     });
@@ -669,8 +876,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 myLocationEnabled: !kIsWeb,
                 myLocationButtonEnabled: false,
                 mapType: MapType.normal,
+                mapToolbarEnabled: false,
+                compassEnabled: true,
+                liteModeEnabled: false,
                 markers: <Marker>{
-                  // Add current location marker if available
+                  // Add bus live location marker if available
+                  if (busInfo.currentLocation != null &&
+                      busInfo.currentLocation!['lat'] != null &&
+                      busInfo.currentLocation!['lng'] != null)
+                    Marker(
+                      markerId: const MarkerId('bus_location'),
+                      position: LatLng(
+                        busInfo.currentLocation!['lat']!,
+                        busInfo.currentLocation!['lng']!,
+                      ),
+                      icon: _busIcon ?? BitmapDescriptor.defaultMarkerWithHue(
+                        BitmapDescriptor.hueRed,
+                      ),
+                      infoWindow: InfoWindow(
+                        title: 'Bus Location',
+                        snippet: '${busInfo.licensePlate} - Live',
+                      ),
+                      anchor: const Offset(0.5, 0.5),
+                    ),
+                  // Add current location marker if available (supervisor's location)
                   if (_currentPosition != null)
                     Marker(
                       markerId: const MarkerId('current_location'),
@@ -681,11 +910,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       icon: BitmapDescriptor.defaultMarkerWithHue(
                         BitmapDescriptor.hueGreen,
                       ),
-                      infoWindow: const InfoWindow(title: 'Current Location'),
+                      infoWindow: const InfoWindow(title: 'Your Location'),
                     ),
-                  // Add all stop markers
-                  if (stops.isNotEmpty)
-                    ...stops.asMap().entries.map<Marker>((entry) {
+                  // Add all stop markers (only valid stops)
+                  if (validStops.isNotEmpty)
+                    ...validStops.asMap().entries.map<Marker>((entry) {
                       final stop = entry.value;
                       print('📍 Adding marker for stop: ${stop.name} at ${stop.latitude}, ${stop.longitude}');
                       return Marker(
@@ -696,22 +925,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         ),
                         infoWindow: InfoWindow(
                           title: stop.name,
-                          snippet: 'Stop ${entry.key + 1} of ${stops.length}',
+                          snippet: 'Stop ${entry.key + 1} of ${validStops.length}',
                         ),
                       );
                     })
-                  else
-                    // Fallback marker if no stops
+                  else if (_currentPosition != null)
+                    // Show current location if no stops
                     Marker(
-                      markerId: const MarkerId('default_location'),
-                      position: LatLng(defaultLat, defaultLng),
-                      icon: BitmapDescriptor.defaultMarkerWithHue(
-                        BitmapDescriptor.hueRed,
+                      markerId: const MarkerId('current_location_fallback'),
+                      position: LatLng(
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
                       ),
-                      infoWindow: const InfoWindow(title: 'Default Location'),
+                      icon: BitmapDescriptor.defaultMarkerWithHue(
+                        BitmapDescriptor.hueGreen,
+                      ),
+                      infoWindow: const InfoWindow(title: 'Current Location'),
                     ),
                 },
-                polylines: polylinePoints.length > 1
+                polylines: polylinePoints.length >= 2
                     ? <Polyline>{
                         Polyline(
                           polylineId: const PolylineId('route'),
@@ -720,6 +952,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           width: 5,
                           patterns: [],
                           geodesic: true,
+                          jointType: JointType.round,
+                          endCap: Cap.roundCap,
+                          startCap: Cap.roundCap,
                         ),
                       }
                     : <Polyline>{},

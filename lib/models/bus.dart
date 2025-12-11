@@ -62,7 +62,20 @@ class RouteInfo {
       routeNumber: json['route_number'] as String? ?? 
                    json['routeNumber'] as String?,
       stops: (json['stops'] as List<dynamic>?)
-              ?.map((e) => Stop.fromJson(e as Map<String, dynamic>))
+              ?.map((e) {
+                try {
+                  return Stop.fromJson(e as Map<String, dynamic>);
+                } catch (err) {
+                  print('⚠️ Error parsing stop: $e, error: $err');
+                  return null;
+                }
+              })
+              .whereType<Stop>()
+              .where((stop) => 
+                  stop.latitude != 0.0 && 
+                  stop.longitude != 0.0 &&
+                  stop.latitude.abs() <= 90 &&
+                  stop.longitude.abs() <= 180)
               .toList() ??
           [],
       distance: (json['distance'] as num?)?.toDouble(),
@@ -120,15 +133,63 @@ class BusInfo {
           : null,
       status: json['status'] as String?,
       capacity: json['capacity'] as int?,
-      currentLocation: json['current_location'] != null
-          ? {
-              'lat': (json['current_location']['lat'] as num?)?.toDouble() ?? 0.0,
-              'lng': (json['current_location']['lng'] as num?)?.toDouble() ?? 0.0,
-            }
-          : null,
+      currentLocation: _parseCurrentLocation(json['current_location']),
       driverInfo: json['driverInfo'] as Map<String, dynamic>? ?? 
                   json['driver_info'] as Map<String, dynamic>?,
     );
+  }
+
+  /// Helper method to parse current_location in various formats
+  static Map<String, double>? _parseCurrentLocation(dynamic locationData) {
+    if (locationData == null) return null;
+    
+    try {
+      // Handle Map format: {lat: x, lng: y} or {latitude: x, longitude: y}
+      if (locationData is Map) {
+        final lat = (locationData['lat'] ?? locationData['latitude']) as num?;
+        final lng = (locationData['lng'] ?? locationData['longitude']) as num?;
+        
+        if (lat != null && lng != null) {
+          final latVal = lat.toDouble();
+          final lngVal = lng.toDouble();
+          
+          // Validate coordinates
+          if (latVal.abs() <= 90 && lngVal.abs() <= 180 && 
+              latVal != 0.0 && lngVal != 0.0) {
+            return {'lat': latVal, 'lng': lngVal};
+          }
+        }
+      }
+      
+      // Handle Array format: [lat, lng] or [lng, lat]
+      if (locationData is List && locationData.length >= 2) {
+        final first = (locationData[0] as num?)?.toDouble();
+        final second = (locationData[1] as num?)?.toDouble();
+        
+        if (first != null && second != null) {
+          // Assume [lat, lng] format (most common)
+          // If coordinates seem reversed (lat > 180), swap them
+          double lat, lng;
+          if (first.abs() <= 90 && second.abs() <= 180) {
+            lat = first;
+            lng = second;
+          } else if (second.abs() <= 90 && first.abs() <= 180) {
+            lat = second;
+            lng = first;
+          } else {
+            return null; // Invalid coordinates
+          }
+          
+          if (lat != 0.0 && lng != 0.0) {
+            return {'lat': lat, 'lng': lng};
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ Error parsing current_location: $e');
+    }
+    
+    return null;
   }
 
   Map<String, dynamic> toJson() {

@@ -317,6 +317,26 @@ class ApiService {
         return null;
       }
       
+      // Debug route data
+      if (routeData != null) {
+        print('🗺️ Route data found: ${routeData.keys.toList()}');
+        final stops = routeData['stops'];
+        if (stops != null) {
+          if (stops is List) {
+            print('🗺️ Stops in route: ${stops.length}');
+            if (stops.isNotEmpty) {
+              print('🗺️ First stop sample: ${stops.first}');
+            }
+          } else {
+            print('⚠️ Stops is not a list: ${stops.runtimeType}');
+          }
+        } else {
+          print('⚠️ No stops found in route data');
+        }
+      } else {
+        print('⚠️ No route data in response');
+      }
+      
       // Combine bus and route data for BusInfo
       final combinedData = Map<String, dynamic>.from(busData);
       if (routeData != null) {
@@ -324,7 +344,16 @@ class ApiService {
       }
       
       try {
-        return BusInfo.fromJson(combinedData);
+        final busInfo = BusInfo.fromJson(combinedData);
+        print('✅ BusInfo parsed successfully');
+        print('🗺️ Route: ${busInfo.route?.name ?? 'null'}');
+        print('🗺️ Stops count: ${busInfo.route?.stops.length ?? 0}');
+        if (busInfo.currentLocation != null) {
+          print('🚌 Bus live location: ${busInfo.currentLocation!['lat']}, ${busInfo.currentLocation!['lng']}');
+        } else {
+          print('⚠️ Bus live location: Not available');
+        }
+        return busInfo;
       } catch (e) {
         print('Error parsing bus data: $e');
         print('Response data: ${response.data}');
@@ -644,36 +673,80 @@ class ApiService {
       ];
       
       final queryParams = <String, dynamic>{};
-      if (busId != null) {
+      if (busId != null && busId.isNotEmpty) {
         queryParams['bus_id'] = busId;
+        print('📦 Added bus_id to query: $busId');
+      } else {
+        print('⚠️ No bus_id provided - backend will use assigned bus');
       }
+      // Only add date if explicitly provided - don't filter by default
       if (date != null) {
-        queryParams['date'] = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+        final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+        queryParams['date'] = dateStr;
+        print('📦 Added date to query: $dateStr');
+      } else {
+        print('📦 No date filter - requesting all bookings');
       }
       
+      DioException? lastError;
       for (final endpoint in possibleEndpoints) {
         try {
+          final fullUrl = '${_dio.options.baseUrl}$endpoint';
           print('🔍 Trying bookings endpoint: $endpoint');
+          print('📦 Query params: $queryParams');
+          print('📦 Full URL: $fullUrl');
+          if (queryParams.isNotEmpty) {
+            final queryString = queryParams.entries.map((e) => '${e.key}=${e.value}').join('&');
+            print('📦 Full URL with params: $fullUrl?$queryString');
+          }
+          
           final response = await _dio.get(
             endpoint,
             queryParameters: queryParams.isEmpty ? null : queryParams,
           );
           print('✅ Response status: ${response.statusCode}');
+          print('✅ Response from: $endpoint');
+          print('📋 Response headers: ${response.headers}');
           
           if (response.data != null) {
             final data = response.data;
             print('📋 Response data type: ${data.runtimeType}');
+            print('📋 Full response: $data');
+            
+            // Log if bookings array exists and its length
+            if (data is Map) {
+              final bookingsCount = (data['bookings'] as List?)?.length ?? -1;
+              print('📊 Bookings array length in response: $bookingsCount');
+              if (bookingsCount == 0) {
+                print('⚠️ Bookings array is empty - this might be correct if no bookings exist');
+              }
+            }
             
             // Handle different response formats
             Map<String, dynamic> bookingsData;
             if (data is Map) {
               final dataMap = data as Map<String, dynamic>;
+              
+              // Check for error response
+              if (dataMap['error'] != null || dataMap['success'] == false) {
+                final errorMsg = dataMap['error'] as String? ?? 'Unknown error';
+                print('❌ API returned error: $errorMsg');
+                if (endpoint == possibleEndpoints.first) {
+                  // If first endpoint fails, throw error
+                  throw Exception(errorMsg);
+                }
+                continue; // Try next endpoint
+              }
+              
               if (dataMap['success'] == true && dataMap['bookings'] != null) {
+                print('✅ Found bookings with success flag');
                 bookingsData = dataMap;
-              } else if (dataMap['bus_id'] != null || dataMap['bookings'] != null) {
+              } else if (dataMap['bus_id'] != null && dataMap['bookings'] != null) {
+                print('✅ Found bookings without success flag');
                 bookingsData = dataMap;
               } else if (dataMap['seats'] != null) {
                 // Alternative format with 'seats' key
+                print('✅ Found bookings in seats format');
                 bookingsData = {
                   'bus_id': dataMap['bus_id'] ?? busId ?? 'unknown',
                   'bookings': dataMap['seats'],
@@ -683,30 +756,102 @@ class ApiService {
                 };
               } else {
                 print('⚠️ Unknown data format, trying next endpoint');
-                print('📋 Full response: $dataMap');
+                print('📋 Available keys: ${dataMap.keys.toList()}');
                 continue;
               }
+              
+              // Log booking count
+              final bookingsList = bookingsData['bookings'] as List?;
+              print('📊 Found ${bookingsList?.length ?? 0} bookings in response');
+              if (bookingsList != null && bookingsList.isNotEmpty) {
+                print('📋 First booking sample: ${bookingsList.first}');
+                print('📋 All bookings: $bookingsList');
+              } else if (bookingsList != null && bookingsList.isEmpty) {
+                print('⚠️ Bookings array is empty - no bookings found');
+                print('📋 Response stats: total_seats=${bookingsData['total_seats']}, booked_seats=${bookingsData['booked_seats']}');
+              }
+              
+              print('✅ Parsing bookings data...');
+              try {
+                final result = BusBookings.fromJson(bookingsData);
+                print('✅ Parsed successfully: ${result.bookings.length} bookings, ${result.bookedSeats} booked seats');
+                if (result.bookings.isNotEmpty) {
+                  print('📋 Parsed booking details:');
+                  for (var booking in result.bookings.take(3)) {
+                    print('   - Seat ${booking.seatNumber}: ${booking.passengerName ?? "Unknown"} (${booking.status})');
+                  }
+                } else {
+                  print('⚠️ No bookings after parsing - check field names match backend');
+                }
+                return result;
+              } catch (e, stackTrace) {
+                print('❌ Error parsing bookings: $e');
+                print('📋 Stack trace: $stackTrace');
+                print('📋 Bookings data that failed: $bookingsData');
+                rethrow;
+              }
             } else {
+              print('⚠️ Response is not a Map, trying next endpoint');
               continue;
             }
-            
-            print('✅ Found bookings data');
-            return BusBookings.fromJson(bookingsData);
           }
         } on DioException catch (e) {
-          print('❌ Endpoint $endpoint failed: ${e.response?.statusCode}');
+          lastError = e;
+          print('❌ Endpoint $endpoint FAILED');
+          print('   Status code: ${e.response?.statusCode ?? "null"}');
+          print('   Error message: ${e.message}');
+          print('   Error type: ${e.type}');
+          print('   Request URL: ${e.requestOptions.uri}');
+          print('   Request method: ${e.requestOptions.method}');
+          if (e.response?.data != null) {
+            print('   Error response data: ${e.response?.data}');
+          }
+          if (e.response?.headers != null) {
+            print('   Response headers: ${e.response?.headers}');
+          }
+          
           if (e.response?.statusCode == 404) {
+            print('   ⚠️ 404 - Endpoint not found, trying next...');
             continue; // Try next endpoint
           }
+          // For 500 errors on the main endpoint, throw immediately (don't try others)
+          if (e.response?.statusCode == 500 && endpoint == possibleEndpoints.first) {
+            print('   ⚠️ 500 - Server error on main endpoint - this is a backend issue!');
+            print('   ⚠️ Check backend logs for the error');
+            final errorData = e.response?.data;
+            if (errorData is Map && errorData['error'] != null) {
+              print('   ⚠️ Backend error message: ${errorData['error']}');
+            }
+            throw Exception('Backend server error (500): ${errorData is Map ? errorData['error'] ?? 'Internal server error' : 'Internal server error'}. Check backend logs.');
+          }
+          // For 401/403, don't try other endpoints
+          if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+            print('   ⚠️ Authentication error (${e.response?.statusCode}) - stopping endpoint attempts');
+            throw _handleError(e);
+          }
+          print('   ⚠️ Other error - trying next endpoint...');
           continue;
-        } catch (e) {
-          print('❌ Error with endpoint $endpoint: $e');
+        } catch (e, stackTrace) {
+          print('❌ Unexpected error with endpoint $endpoint: $e');
+          print('   Stack trace: $stackTrace');
           continue;
         }
       }
       
       // If all endpoints fail, return empty bookings
-      print('⚠️ No bookings endpoint found, returning empty bookings');
+      print('⚠️⚠️⚠️ ALL ENDPOINTS FAILED ⚠️⚠️⚠️');
+      print('⚠️ Tried all endpoints: ${possibleEndpoints.join(", ")}');
+      print('⚠️ Base URL: ${_dio.options.baseUrl}');
+      if (lastError != null) {
+        print('⚠️ Last error status: ${lastError.response?.statusCode}');
+        print('⚠️ Last error message: ${lastError.message}');
+        print('⚠️ Last error URL: ${lastError.requestOptions.uri}');
+      }
+      print('⚠️ Check:');
+      print('   1. Endpoint /supervisor-bookings exists at ${_dio.options.baseUrl}/supervisor-bookings');
+      print('   2. Authentication token is valid');
+      print('   3. Bus ID matches: $busId');
+      print('⚠️ Returning empty bookings');
       return BusBookings(
         busId: busId ?? 'unknown',
         totalSeats: 40, // Default capacity

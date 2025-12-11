@@ -25,30 +25,79 @@ class SeatBooking {
   });
 
   factory SeatBooking.fromJson(Map<String, dynamic> json) {
+    // Normalize status: 'confirmed' -> 'booked'
+    String status = json['status'] as String? ?? 
+                    json['booking_status'] as String? ?? 
+                    'available';
+    if (status == 'confirmed') {
+      status = 'booked';
+    }
+    
+    // Try multiple field names for seat number
+    int? seatNumber;
+    if (json['seat_number'] != null) {
+      seatNumber = (json['seat_number'] as num?)?.toInt();
+    } else if (json['seat_no'] != null) {
+      seatNumber = (json['seat_no'] as num?)?.toInt();
+    } else if (json['seat'] != null) {
+      seatNumber = (json['seat'] as num?)?.toInt();
+    } else if (json['seatNumber'] != null) {
+      seatNumber = (json['seatNumber'] as num?)?.toInt();
+    }
+    
+    if (seatNumber == null || seatNumber == 0) {
+      print('⚠️ Warning: Seat number is missing or 0 in booking');
+      print('   JSON keys: ${json.keys.toList()}');
+      print('   Full booking data: $json');
+    } else if (seatNumber < 1 || seatNumber > 40) {
+      print('⚠️ Warning: Seat number $seatNumber is out of valid range (1-40)');
+      print('   Full booking data: $json');
+    }
+    
+    // Try multiple field names for passenger name
+    String? passengerName;
+    if (json['passenger_name'] != null) {
+      passengerName = json['passenger_name'] as String?;
+    } else if (json['name'] != null) {
+      passengerName = json['name'] as String?;
+    } else if (json['full_name'] != null) {
+      passengerName = json['full_name'] as String?;
+    } else if (json['profiles'] != null) {
+      // Handle nested profile object
+      final profiles = json['profiles'];
+      if (profiles is Map) {
+        passengerName = profiles['full_name'] as String?;
+      }
+    }
+    
     return SeatBooking(
       id: json['id'] as String? ?? json['booking_id'] as String? ?? '',
-      busId: json['bus_id'] as String,
-      seatNumber: json['seat_number'] as int? ?? json['seat'] as int? ?? 0,
-      passengerName: json['passenger_name'] as String? ?? 
-                     json['name'] as String? ??
-                     json['full_name'] as String?,
+      busId: json['bus_id'] as String? ?? json['busId'] as String? ?? '',
+      seatNumber: seatNumber ?? 0,
+      passengerName: passengerName,
       passengerId: json['passenger_id'] as String? ?? 
                    json['user_id'] as String?,
-      cardId: json['card_id'] as String? ?? json['nfc_id'] as String?,
-      status: json['status'] as String? ?? 
-              (json['is_booked'] == true ? 'booked' : 'available'),
+      cardId: json['card_id'] as String? ?? 
+              json['nfc_id'] as String? ??
+              json['cardId'] as String?,
+      status: status,
       bookedAt: json['booked_at'] != null
-          ? DateTime.parse(json['booked_at'] as String)
+          ? DateTime.tryParse(json['booked_at'] as String)
           : (json['created_at'] != null
-              ? DateTime.parse(json['created_at'] as String)
-              : null),
+              ? DateTime.tryParse(json['created_at'] as String)
+              : (json['booking_date'] != null
+                  ? DateTime.tryParse(json['booking_date'] as String)
+                  : null)),
       tripDate: json['trip_date'] != null
-          ? DateTime.parse(json['trip_date'] as String)
-          : (json['date'] != null
-              ? DateTime.parse(json['date'] as String)
-              : null),
+          ? DateTime.tryParse(json['trip_date'] as String)
+          : (json['travel_date'] != null
+              ? DateTime.tryParse(json['travel_date'] as String)
+              : (json['date'] != null
+                  ? DateTime.tryParse(json['date'] as String)
+                  : null)),
       bookingType: json['booking_type'] as String? ?? 
-                   json['type'] as String? ?? 'online',
+                   json['type'] as String? ?? 
+                   (json['payment_method'] == 'rapid_card' ? 'rapid_card' : 'online'),
     );
   }
 
@@ -100,10 +149,16 @@ class BusBookings {
                       json['total_capacity'] as int? ?? 
                       40;
     
+    // Calculate booked seats - include 'confirmed', 'booked', and 'occupied' statuses
     final bookedSeats = json['booked_seats'] as int? ?? 
-                       bookingsList.where((b) => 
-                         b.status == 'booked' || b.status == 'occupied'
-                       ).length;
+                       bookingsList.where((b) {
+                         final status = b.status.toLowerCase();
+                         return status == 'booked' || 
+                                status == 'occupied' || 
+                                status == 'confirmed';
+                       }).length;
+    
+    print('📊 BusBookings.fromJson: total_seats=$totalSeats, booked_seats=$bookedSeats, bookings_count=${bookingsList.length}');
     
     final availableSeats = json['available_seats'] as int? ?? 
                            (totalSeats - bookedSeats);
@@ -117,9 +172,11 @@ class BusBookings {
       bookings: bookingsList,
       tripDate: json['trip_date'] != null
           ? DateTime.parse(json['trip_date'] as String)
-          : (json['date'] != null
-              ? DateTime.parse(json['date'] as String)
-              : null),
+          : (json['travel_date'] != null
+              ? DateTime.parse(json['travel_date'] as String)
+              : (json['date'] != null
+                  ? DateTime.parse(json['date'] as String)
+                  : null)),
     );
   }
 
