@@ -177,14 +177,11 @@ class BookingsScreen extends ConsumerWidget {
                       size: 18,
                     ),
                     const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'Total Seats',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.textSecondary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      'Total Seats',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppTheme.textSecondary,
                       ),
                     ),
                   ],
@@ -219,14 +216,11 @@ class BookingsScreen extends ConsumerWidget {
                       size: 18,
                     ),
                     const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'Booked',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.textSecondary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      'Booked',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppTheme.textSecondary,
                       ),
                     ),
                   ],
@@ -261,14 +255,11 @@ class BookingsScreen extends ConsumerWidget {
                       size: 18,
                     ),
                     const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'Available',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.textSecondary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      'Available',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppTheme.textSecondary,
                       ),
                     ),
                   ],
@@ -411,33 +402,27 @@ class BookingsScreen extends ConsumerWidget {
   }
 
   Widget _buildLegendItem(String label, Color color) {
-    return Flexible(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 16,
-            height: 16,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: AppTheme.borderColor),
-            ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: AppTheme.borderColor),
           ),
-          const SizedBox(width: AppTheme.spacingXS),
-          Flexible(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppTheme.textSecondary,
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
+        ),
+        const SizedBox(width: AppTheme.spacingXS),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: AppTheme.textSecondary,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -470,17 +455,12 @@ class BookingsScreen extends ConsumerWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '$seatNum',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: isBooked ? Colors.white : AppTheme.textPrimary,
-                ),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+            Text(
+              '$seatNum',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: isBooked ? Colors.white : AppTheme.textPrimary,
               ),
             ),
             if (isBooked && booking?.passengerName != null) ...[
@@ -624,18 +604,14 @@ class BookingsScreen extends ConsumerWidget {
           Text(
             'Bus ID: ${bookings.busId}',
             style: const TextStyle(fontSize: 11, color: AppTheme.textTertiary, fontFamily: 'monospace'),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
           ),
           Text(
             'Total Seats: ${bookings.totalSeats}',
             style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-            overflow: TextOverflow.ellipsis,
           ),
           Text(
             'Total Bookings Received: ${bookings.bookings.length}',
             style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-            overflow: TextOverflow.ellipsis,
           ),
           Text(
             'Valid Bookings (1-${bookings.totalSeats}): ${validBookings.length}',
@@ -643,23 +619,19 @@ class BookingsScreen extends ConsumerWidget {
               fontSize: 12, 
               color: validBookings.isEmpty ? AppTheme.errorColor : AppTheme.primaryGreen,
             ),
-            overflow: TextOverflow.ellipsis,
           ),
           if (invalidBookings.isNotEmpty)
             Text(
               'Invalid Bookings: ${invalidBookings.length}',
               style: const TextStyle(fontSize: 12, color: AppTheme.errorColor),
-              overflow: TextOverflow.ellipsis,
             ),
           Text(
             'Booked Seats (from API): ${bookings.bookedSeats}',
             style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-            overflow: TextOverflow.ellipsis,
           ),
           Text(
             'Available Seats: ${bookings.availableSeats}',
             style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-            overflow: TextOverflow.ellipsis,
           ),
           if (bookings.bookings.isNotEmpty) ...[
             const SizedBox(height: AppTheme.spacingSM),
@@ -684,14 +656,11 @@ class BookingsScreen extends ConsumerWidget {
                           : AppTheme.errorColor,
                       fontFamily: 'monospace',
                     ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
                   ),
                   if (b.seatNumber <= 0 || b.seatNumber > bookings.totalSeats)
                     Text(
                       '  ⚠️ Invalid seat number!',
                       style: const TextStyle(fontSize: 10, color: AppTheme.errorColor),
-                      overflow: TextOverflow.ellipsis,
                     ),
                 ],
               ),
@@ -781,8 +750,6 @@ class BookingsScreen extends ConsumerWidget {
                     fontWeight: FontWeight.w600,
                     color: AppTheme.textPrimary,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
                 if (booking.cardId != null) ...[
                   const SizedBox(height: 4),
@@ -794,16 +761,12 @@ class BookingsScreen extends ConsumerWidget {
                         color: AppTheme.textTertiary,
                       ),
                       const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          booking.cardId!,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.textTertiary,
-                            fontFamily: 'monospace',
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
+                      Text(
+                        booking.cardId!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textTertiary,
+                          fontFamily: 'monospace',
                         ),
                       ),
                     ],
@@ -819,14 +782,11 @@ class BookingsScreen extends ConsumerWidget {
                         color: AppTheme.textTertiary,
                       ),
                       const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          DateFormat('MMM dd, HH:mm').format(booking.bookedAt!),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.textTertiary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                      Text(
+                        DateFormat('MMM dd, HH:mm').format(booking.bookedAt!),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textTertiary,
                         ),
                       ),
                     ],
@@ -853,12 +813,10 @@ class BookingsScreen extends ConsumerWidget {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
-                color: booking.status == 'occupied' 
-                    ? AppTheme.primaryBlue
-                    : AppTheme.primaryGreen,
+              color: booking.status == 'occupied' 
+                  ? AppTheme.primaryBlue
+                  : AppTheme.primaryGreen,
               ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
             ),
           ),
         ],

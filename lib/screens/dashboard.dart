@@ -27,7 +27,6 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  bool _isTripActive = false;
   Position? _currentPosition;
   GoogleMapController? _mapController;
   Timer? _busLocationRefreshTimer;
@@ -36,27 +35,41 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // Set default location immediately so map can render (Gulshan, Dhaka - on land)
-    _currentPosition = Position(
-      latitude: 23.7947, // Dhaka city center (Gulshan)
-      longitude: 90.4144,
-      timestamp: DateTime.now(),
-      accuracy: 0,
-      altitude: 0,
-      altitudeAccuracy: 0,
-      heading: 0,
-      headingAccuracy: 0,
-      speed: 0,
-      speedAccuracy: 0,
-    );
-    // Try to get actual location in background
-    _getCurrentLocation();
-    
-    // Start periodic refresh of bus location (every 10 seconds)
-    _startBusLocationRefresh();
-    
-    // Create custom bus icon
-    _createBusIcon();
+    print('📱 Dashboard initState called');
+    try {
+      // Set default location immediately so map can render (Gulshan, Dhaka - on land)
+      _currentPosition = Position(
+        latitude: 23.7947, // Dhaka city center (Gulshan)
+        longitude: 90.4144,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+      print('✅ Default position set');
+      
+      // Try to get actual location in background (don't wait for it)
+      _getCurrentLocation().catchError((e) {
+        print('⚠️ Error getting current location: $e');
+      });
+      
+      // Start periodic refresh of bus location (every 10 seconds)
+      _startBusLocationRefresh();
+      print('✅ Bus location refresh timer started');
+      
+      // Create custom bus icon (don't wait for it)
+      _createBusIcon().catchError((e) {
+        print('⚠️ Error creating bus icon: $e');
+      });
+      print('✅ Bus icon creation started');
+    } catch (e, stackTrace) {
+      print('❌ Error in initState: $e');
+      print('Stack trace: $stackTrace');
+    }
   }
 
   /// Create a custom bus icon for the map marker
@@ -210,16 +223,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
 
   void _toggleTrip() {
-    setState(() => _isTripActive = !_isTripActive);
+    // Trip status is managed by the backend, so this is just for UI feedback
+    // In a real implementation, this would call an API to start/end the trip
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Trip status is managed by the driver. Use NFC to record passenger taps.'),
+        backgroundColor: AppTheme.infoColor,
+      ),
+    );
   }
 
-  void _openNFCReader(String busId) {
+  void _openNFCReader(String busId, bool isActive) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => NFCReaderScreen(
           busId: busId,
-          isTapIn: !_isTripActive,
+          isTapIn: !isActive, // If trip is active, allow tap-out, otherwise tap-in
         ),
       ),
     );
@@ -247,11 +267,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final busAsync = ref.watch(busProvider);
-    final unsyncedCount = ref.watch(syncStatusProvider);
-    final todayReport = ref.watch(todayReportProvider);
+    print('📱 Dashboard build called');
+    try {
+      final busAsync = ref.watch(busProvider);
+      final unsyncedCount = ref.watch(syncStatusProvider);
+      final todayReport = ref.watch(todayReportProvider);
+      
+      print('📱 Bus provider state: ${busAsync.runtimeType}');
+      busAsync.when(
+        data: (data) => print('📱 Bus data: ${data != null ? "has bus" : "null"}'),
+        loading: () => print('📱 Bus loading...'),
+        error: (err, _) => print('📱 Bus error: $err'),
+      );
 
-    return Scaffold(
+      return Scaffold(
       backgroundColor: AppTheme.backgroundDark,
       appBar: TopBar(
         title: 'CityGo Supervisor',
@@ -376,8 +405,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     child: Column(
                       children: [
                         PrimaryButton(
-                          text: _isTripActive ? 'End Trip' : 'Start Trip',
-                          icon: _isTripActive ? Icons.stop : Icons.play_arrow,
+                          text: busInfo.isActive ? 'Trip Active' : 'Trip Inactive',
+                          icon: busInfo.isActive ? Icons.check_circle : Icons.pause_circle,
                           onPressed: _toggleTrip,
                           width: double.infinity,
                         ),
@@ -480,13 +509,68 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
       floatingActionButton: busAsync.when(
         data: (busInfo) => FloatingNFCAction(
-          onPressed: busInfo != null ? () => _openNFCReader(busInfo.id) : null,
+          onPressed: busInfo != null ? () => _openNFCReader(busInfo.id, busInfo.isActive) : null,
           isScanning: false,
         ),
         loading: () => null,
         error: (_, __) => null,
       ),
     );
+    } catch (e, stackTrace) {
+      print('❌ Error in dashboard build: $e');
+      print('Stack trace: $stackTrace');
+      // Return a safe fallback UI
+      return Scaffold(
+        backgroundColor: AppTheme.backgroundDark,
+        appBar: AppBar(
+          title: const Text('CityGo Supervisor'),
+          backgroundColor: AppTheme.surfaceDark,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(AppTheme.spacingMD),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: AppTheme.errorColor,
+                ),
+                const SizedBox(height: AppTheme.spacingMD),
+                Text(
+                  'Dashboard Error',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacingSM),
+                Text(
+                  'An error occurred while loading the dashboard.\nPlease try again.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacingLG),
+                PrimaryButton(
+                  text: 'Retry',
+                  icon: Icons.refresh,
+                  onPressed: () {
+                    // Force rebuild
+                    setState(() {});
+                  },
+                  width: 200,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildBusCard(busInfo) {
@@ -512,28 +596,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  child: Text(
-                    busInfo.routeNumber ?? busInfo.route?.name ?? 'Bus Route',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                Text(
+                  busInfo.routeNumber ?? busInfo.route?.name ?? 'Bus Route',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
                   ),
                 ),
                 const SizedBox(height: AppTheme.spacingXS),
-                Flexible(
-                  child: Text(
-                    busInfo.licensePlate,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.textSecondary,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                Text(
+                  busInfo.licensePlate,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textSecondary,
                   ),
                 ),
               ],
@@ -545,17 +621,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               vertical: AppTheme.spacingSM,
             ),
             decoration: BoxDecoration(
-              color: _isTripActive
+              color: busInfo.isActive
                   ? AppTheme.successColor.withOpacity(0.2)
                   : AppTheme.textTertiary.withOpacity(0.2),
               borderRadius: BorderRadius.circular(AppTheme.radiusSM),
             ),
             child: Text(
-              _isTripActive ? 'Active' : 'Inactive',
+              busInfo.isActive ? 'Active' : 'Inactive',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: _isTripActive
+                color: busInfo.isActive
                     ? AppTheme.successColor
                     : AppTheme.textTertiary,
               ),
@@ -677,25 +753,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Flexible(
-                child: Text(
-                  '65% Complete',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.textSecondary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+              Text(
+                '65% Complete',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary,
                 ),
               ),
-              Flexible(
-                child: Text(
-                  '13 / 20 Stops',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.textSecondary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.end,
+              Text(
+                '13 / 20 Stops',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary,
                 ),
               ),
             ],

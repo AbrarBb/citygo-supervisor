@@ -21,15 +21,23 @@ class LocalDB {
 
   /// Initialize database
   Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, _databaseName);
+    try {
+      final dbPath = await getDatabasesPath();
+      final path = join(dbPath, _databaseName);
+      
+      print('📱 Initializing database at: $path');
 
-    return await openDatabase(
-      path,
-      version: _databaseVersion,
-      onCreate: _onCreate,
-      onUpgrade: _onUpgrade,
-    );
+      return await openDatabase(
+        path,
+        version: _databaseVersion,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      );
+    } catch (e, stackTrace) {
+      print('❌ Database initialization error: $e');
+      print('Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   /// Create tables
@@ -107,21 +115,27 @@ class LocalDB {
 
   /// Save NFC log for offline sync
   Future<int> saveNFCLog(NfcEvent event) async {
-    final db = await database;
-    return await db.insert(
-      'nfc_logs',
-      {
-        'offline_id': event.offlineId ?? _generateOfflineId(),
-        'card_id': event.cardId,
-        'bus_id': event.busId,
-        'event_type': event.eventType,
-        'latitude': event.latitude,
-        'longitude': event.longitude,
-        'timestamp': event.timestamp.millisecondsSinceEpoch,
-        'synced': 0,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    try {
+      final db = await database;
+      return await db.insert(
+        'nfc_logs',
+        {
+          'offline_id': event.offlineId ?? _generateOfflineId(),
+          'card_id': event.cardId,
+          'bus_id': event.busId,
+          'event_type': event.eventType,
+          'latitude': event.latitude,
+          'longitude': event.longitude,
+          'timestamp': event.timestamp.millisecondsSinceEpoch,
+          'synced': 0,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error saving NFC log: $e');
+      print('Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   /// Save manual ticket for offline sync

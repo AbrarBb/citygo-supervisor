@@ -342,6 +342,8 @@ class ApiService {
       if (routeData != null) {
         combinedData['route'] = routeData;
       }
+      // Add is_active from the root response
+      combinedData['is_active'] = isActive;
       
       try {
         final busInfo = BusInfo.fromJson(combinedData);

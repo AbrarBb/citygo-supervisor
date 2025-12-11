@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show TargetPlatform;
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
@@ -15,15 +16,19 @@ import 'screens/settings.dart';
 import 'screens/registered_cards.dart';
 
 void main() {
-  // Initialize database factory for web/desktop platforms
+  // Initialize database factory only for web/desktop platforms
+  // Android/iOS use the default sqflite implementation (no factory needed)
   if (kIsWeb) {
     // Initialize for web using IndexedDB
     databaseFactory = databaseFactoryFfiWeb;
-  } else {
-    // Initialize for desktop (Windows, Linux, macOS)
+  } else if (defaultTargetPlatform == TargetPlatform.windows ||
+             defaultTargetPlatform == TargetPlatform.linux ||
+             defaultTargetPlatform == TargetPlatform.macOS) {
+    // Initialize for desktop platforms only (Windows, Linux, macOS)
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  // For Android/iOS, use default sqflite (no initialization needed)
   
   runApp(
     const ProviderScope(

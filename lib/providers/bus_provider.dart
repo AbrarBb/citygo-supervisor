@@ -6,6 +6,7 @@ import '../models/bus.dart';
 
 /// Bus provider
 final busProvider = FutureProvider<BusInfo?>((ref) async {
+  print('🚌 Bus provider started');
   final apiService = ApiService();
   
   // First, quickly check if we're in demo mode
@@ -16,7 +17,9 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
       onTimeout: () => null,
     );
     isDemo = token != null && token.startsWith('demo_');
+    print('🚌 Demo mode check: $isDemo');
   } catch (e) {
+    print('⚠️ Error checking demo mode: $e');
     isDemo = false;
   }
   
@@ -28,16 +31,20 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
   
   // Otherwise, try to get bus data from API
   try {
+    print('🚌 Fetching bus data from API...');
     final busInfo = await apiService.getAssignedBus().timeout(
-      const Duration(seconds: 5),
+      const Duration(seconds: 10), // Increased timeout
       onTimeout: () {
-        // If timeout, check if demo mode and return mock data
-        throw TimeoutException('Request timeout', const Duration(seconds: 5));
+        print('⏱️ Bus API request timed out');
+        throw TimeoutException('Request timeout', const Duration(seconds: 10));
       },
     );
     
+    print('🚌 Bus API response received: ${busInfo != null ? "has bus" : "null"}');
+    
     // If not assigned, return null
     if (busInfo == null) {
+      print('⚠️ No bus assigned to supervisor');
       return null;
     }
     
@@ -45,14 +52,16 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
     try {
       final localDB = LocalDB();
       localDB.cacheBusInfo(busInfo).catchError((e) {
-        // Ignore cache errors
+        print('⚠️ Error caching bus info: $e');
       });
     } catch (e) {
-      // Ignore cache errors
+      print('⚠️ Error creating LocalDB: $e');
     }
     
+    print('✅ Bus provider returning bus info');
     return busInfo;
-  } on TimeoutException {
+  } on TimeoutException catch (e) {
+    print('⏱️ TimeoutException in bus provider: $e');
     // On timeout, check if demo mode and return mock data
     try {
       final isDemo = await apiService.isDemoMode().timeout(
@@ -60,26 +69,38 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
         onTimeout: () => false,
       );
       if (isDemo) {
+        print('🎭 Demo mode detected after timeout, returning mock data');
         return _getMockBusData();
       }
     } catch (e) {
-      // Ignore
+      print('⚠️ Error checking demo mode after timeout: $e');
     }
     
     // Try cache as fallback
     try {
+      print('💾 Trying to load cached bus info...');
       final localDB = LocalDB();
       final cached = await localDB.getCachedBusInfo().timeout(
         const Duration(seconds: 1),
-        onTimeout: () => null,
+        onTimeout: () {
+          print('⏱️ Cache read timed out');
+          return null;
+        },
       );
-      if (cached != null) return cached;
+      if (cached != null) {
+        print('✅ Returning cached bus info');
+        return cached;
+      }
     } catch (e) {
-      // Ignore
+      print('⚠️ Error reading cache: $e');
     }
     
+    print('❌ Bus provider throwing TimeoutException');
     rethrow;
-  } catch (e) {
+  } catch (e, stackTrace) {
+    print('❌ Error in bus provider: $e');
+    print('Stack trace: $stackTrace');
+    
     // Check if demo mode on any error
     try {
       final isDemo = await apiService.isDemoMode().timeout(
@@ -87,24 +108,33 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
         onTimeout: () => false,
       );
       if (isDemo) {
+        print('🎭 Demo mode detected after error, returning mock data');
         return _getMockBusData();
       }
     } catch (e) {
-      // Ignore
+      print('⚠️ Error checking demo mode after error: $e');
     }
     
     // Try cache as fallback
     try {
+      print('💾 Trying to load cached bus info after error...');
       final localDB = LocalDB();
       final cached = await localDB.getCachedBusInfo().timeout(
         const Duration(seconds: 1),
-        onTimeout: () => null,
+        onTimeout: () {
+          print('⏱️ Cache read timed out');
+          return null;
+        },
       );
-      if (cached != null) return cached;
+      if (cached != null) {
+        print('✅ Returning cached bus info after error');
+        return cached;
+      }
     } catch (e) {
-      // Ignore
+      print('⚠️ Error reading cache after error: $e');
     }
     
+    print('❌ Bus provider rethrowing error');
     rethrow;
   }
 });
@@ -144,6 +174,7 @@ BusInfo _getMockBusData() {
       ],
     ),
     status: 'active',
+    isActive: true,
   );
 }
 

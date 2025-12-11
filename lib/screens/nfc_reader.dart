@@ -162,25 +162,44 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
         });
         _showResultBottomSheet(response);
       } catch (e) {
-        // Save offline
-        await nfcService.localDB.saveNFCLog(event);
-        setState(() {
-          _statusText = 'Saved offline (No connection)';
-          _isProcessing = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Saved offline: ${e.toString()}'),
-            backgroundColor: AppTheme.warningColor,
-          ),
-        );
+        // Save offline - with better error handling
+        try {
+          await nfcService.localDB.saveNFCLog(event);
+          setState(() {
+            _statusText = 'Saved offline (No connection)';
+            _isProcessing = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved offline: ${e.toString()}'),
+              backgroundColor: AppTheme.warningColor,
+            ),
+          );
+        } catch (dbError) {
+          // Database error - show error but don't crash
+          print('❌ Database error saving offline: $dbError');
+          setState(() {
+            _statusText = 'Error saving offline';
+            _isProcessing = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Network error: ${e.toString()}\nDatabase error: ${dbError.toString()}'),
+              backgroundColor: AppTheme.errorColor,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       if (mounted) {
+        print('❌ Simulation error: $e');
+        print('Stack trace: $stackTrace');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Simulation error: ${e.toString()}'),
             backgroundColor: AppTheme.errorColor,
+            duration: const Duration(seconds: 5),
           ),
         );
         setState(() {

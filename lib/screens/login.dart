@@ -43,7 +43,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.listen<AsyncValue<LoginResponse?>>(authProvider, (previous, next) {
       next.whenData((loginResponse) {
         if (loginResponse != null && mounted) {
-          Navigator.pushReplacementNamed(context, '/dashboard');
+          print('✅ Login successful, navigating to dashboard');
+          Navigator.pushReplacementNamed(context, '/dashboard').then((_) {
+            print('✅ Navigation to dashboard completed');
+          }).catchError((e) {
+            print('❌ Navigation error: $e');
+          });
+        } else {
+          print('⚠️ Login response is null or widget not mounted');
         }
       });
       

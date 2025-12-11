@@ -107,6 +107,7 @@ class BusInfo {
   final int? capacity;
   final Map<String, double>? currentLocation;
   final Map<String, dynamic>? driverInfo;
+  final bool isActive; // Whether the bus trip is currently active
 
   BusInfo({
     required this.id,
@@ -117,6 +118,7 @@ class BusInfo {
     this.capacity,
     this.currentLocation,
     this.driverInfo,
+    this.isActive = false,
   });
 
   factory BusInfo.fromJson(Map<String, dynamic> json) {
@@ -136,6 +138,9 @@ class BusInfo {
       currentLocation: _parseCurrentLocation(json['current_location']),
       driverInfo: json['driverInfo'] as Map<String, dynamic>? ?? 
                   json['driver_info'] as Map<String, dynamic>?,
+      isActive: (json['is_active'] as bool?) ?? 
+                (json['isActive'] as bool?) ?? 
+                ((json['status'] as String?) == 'active'),
     );
   }
 
