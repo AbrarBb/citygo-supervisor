@@ -131,13 +131,13 @@ class NFCService {
                             final textBytes = payload.skip(1).toList();
                             final text = String.fromCharCodes(textBytes);
                             if (text.startsWith('RC-')) {
-                              nfcId = text.trim();
+                              nfcId = text.trim().toLowerCase();
                               print('✅ Found card ID in NDEF: $nfcId');
                               break;
                             } else if (text.contains('RC-')) {
                               final match = RegExp(r'RC-[A-Fa-f0-9]+').firstMatch(text);
                               if (match != null) {
-                                nfcId = match.group(0);
+                                nfcId = match.group(0)!.toLowerCase();
                                 print('✅ Extracted card ID from NDEF: $nfcId');
                                 break;
                               }
@@ -268,12 +268,15 @@ class NFCService {
 
             // If still no ID found, generate fallback
             if (nfcId == null) {
-              final hash = tag.hashCode.toRadixString(16).toUpperCase();
+              final hash = tag.hashCode.toRadixString(16).toLowerCase();
               nfcId = 'RC-$hash';
               print('⚠️ No card ID found, using fallback: $nfcId');
             }
 
-            print('📱 Final card ID: $nfcId');
+            // Normalize card ID: trim and convert to lowercase for consistency
+            // At this point, nfcId is guaranteed to be non-null
+            nfcId = nfcId!.trim().toLowerCase();
+            print('📱 Final card ID (normalized): $nfcId');
             
             // Complete the future with the card ID
             if (!completer.isCompleted) {

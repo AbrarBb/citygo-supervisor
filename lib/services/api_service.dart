@@ -372,10 +372,17 @@ class ApiService {
   /// NFC Tap-In - POST /nfc-tap-in
   Future<NfcTapResponse> tapIn(NfcEvent event) async {
     try {
+      // Normalize card ID: trim and lowercase for consistency with backend
+      final normalizedCardId = event.cardId.trim().toLowerCase();
+      print('📤 Sending tap-in request:');
+      print('   Card ID: "$normalizedCardId" (original: "${event.cardId}")');
+      print('   Bus ID: ${event.busId}');
+      print('   Location: ${event.latitude}, ${event.longitude}');
+      
       final response = await _dio.post(
         '/nfc-tap-in',
         data: {
-          'card_id': event.cardId,
+          'card_id': normalizedCardId,
           'bus_id': event.busId,
           'location': {
             'lat': event.latitude,
@@ -384,8 +391,12 @@ class ApiService {
           if (event.offlineId != null) 'offline_id': event.offlineId,
         },
       );
+      print('✅ Tap-in successful: ${response.data}');
       return NfcTapResponse.fromJson(response.data);
     } on DioException catch (e) {
+      print('❌ Tap-in failed:');
+      print('   Status: ${e.response?.statusCode}');
+      print('   Response: ${e.response?.data}');
       throw _handleError(e);
     }
   }
@@ -393,10 +404,17 @@ class ApiService {
   /// NFC Tap-Out - POST /nfc-tap-out
   Future<NfcTapResponse> tapOut(NfcEvent event) async {
     try {
+      // Normalize card ID: trim and lowercase for consistency with backend
+      final normalizedCardId = event.cardId.trim().toLowerCase();
+      print('📤 Sending tap-out request:');
+      print('   Card ID: "$normalizedCardId" (original: "${event.cardId}")');
+      print('   Bus ID: ${event.busId}');
+      print('   Location: ${event.latitude}, ${event.longitude}');
+      
       final response = await _dio.post(
         '/nfc-tap-out',
         data: {
-          'card_id': event.cardId,
+          'card_id': normalizedCardId,
           'bus_id': event.busId,
           'location': {
             'lat': event.latitude,
@@ -405,8 +423,12 @@ class ApiService {
           if (event.offlineId != null) 'offline_id': event.offlineId,
         },
       );
+      print('✅ Tap-out successful: ${response.data}');
       return NfcTapResponse.fromJson(response.data);
     } on DioException catch (e) {
+      print('❌ Tap-out failed:');
+      print('   Status: ${e.response?.statusCode}');
+      print('   Response: ${e.response?.data}');
       throw _handleError(e);
     }
   }
