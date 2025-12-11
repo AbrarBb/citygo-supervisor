@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/nfc.dart';
@@ -28,7 +29,20 @@ class NFCService {
   /// Supports both NDEF records (for NTAG216) and tag identifiers
   Future<String?> readNFCTag() async {
     try {
+      // Check if NFC is available first
+      final isAvailable = await NfcManager.instance.isAvailable();
+      if (!isAvailable) {
+        print('❌ NFC is not available on this device');
+        return null;
+      }
+      
+      print('📱 Starting NFC session...');
+      print('📱 Waiting for NFC tag - please tap your card now');
+      
+      // Use Completer to wait for tag discovery
+      final completer = Completer<String?>();
       String? nfcId;
+      bool tagProcessed = false;
 
       await NfcManager.instance.startSession(
         pollingOptions: {
@@ -37,6 +51,11 @@ class NFCService {
           NfcPollingOption.iso18092,
         },
         onDiscovered: (NfcTag tag) async {
+          // Prevent processing the same tag multiple times
+          if (tagProcessed) return;
+          tagProcessed = true;
+          
+          print('📱 NFC tag discovered! Processing...');
           try {
             // First, try to read NDEF records (for NTAG216 and other NDEF-formatted tags)
             // This is where the actual card ID like "RC-198b42de" is stored
@@ -139,8 +158,50 @@ class NFCService {
             
             // If NDEF didn't work, try reading tag identifier as fallback
             if (nfcId == null) {
-              // Access tag data - nfc_manager exposes data through tag.data
-              final tagData = (tag as dynamic).data as Map<String, dynamic>?;
+              print('📱 Trying to read tag identifier as fallback...');
+              
+              // Try multiple ways to access tag data
+              Map<String, dynamic>? tagData;
+              
+              // Method 1: Try tag.handle
+              try {
+                final tagHandle = (tag as dynamic).handle;
+                if (tagHandle is Map) {
+                  tagData = tagHandle as Map<String, dynamic>;
+                  print('✅ Got tag data from handle');
+                }
+              } catch (e) {
+                print('⚠️ Could not access tag.handle: $e');
+              }
+              
+              // Method 2: Try tag.data (if available)
+              if (tagData == null) {
+                try {
+                  final tagDataProp = (tag as dynamic).data;
+                  if (tagDataProp is Map) {
+                    tagData = tagDataProp as Map<String, dynamic>;
+                    print('✅ Got tag data from data property');
+                  }
+                } catch (e) {
+                  print('⚠️ Could not access tag.data: $e');
+                }
+              }
+              
+              // Method 3: Try accessing directly
+              if (tagData == null) {
+                try {
+                  final tagMap = Map<String, dynamic>.from(tag as Map);
+                  tagData = tagMap;
+                  print('✅ Got tag data by converting tag to map');
+                } catch (e) {
+                  print('⚠️ Could not convert tag to map: $e');
+                }
+              }
+              
+              print('📱 Tag data available: ${tagData != null}');
+              if (tagData != null) {
+                print('📱 Tag data keys: ${tagData.keys.toList()}');
+              }
               
               if (tagData != null) {
                 // Try to get ID from different tag technologies
@@ -213,19 +274,59 @@ class NFCService {
             }
 
             print('📱 Final card ID: $nfcId');
+            
+            // Complete the future with the card ID
+            if (!completer.isCompleted) {
+              completer.complete(nfcId);
+            }
           } catch (e) {
             print('❌ Error processing tag: $e');
+            if (!completer.isCompleted) {
+              completer.complete(null);
+            }
           } finally {
             // Stop session after reading
-            await NfcManager.instance.stopSession();
+            try {
+              await NfcManager.instance.stopSession();
+            } catch (e) {
+              print('⚠️ Error stopping session: $e');
+            }
           }
         },
       );
 
-      return nfcId;
+      // Wait for tag to be discovered (with timeout)
+      try {
+        return await completer.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            print('⏱️ NFC read timeout - no tag detected within 30 seconds');
+            NfcManager.instance.stopSession().catchError((e) {
+              print('⚠️ Error stopping session on timeout: $e');
+            });
+            return null;
+          },
+        );
+      } catch (e) {
+        print('❌ Error waiting for tag: $e');
+        // Make sure to complete the completer if it's not already completed
+        if (!completer.isCompleted) {
+          completer.complete(null);
+        }
+        try {
+          await NfcManager.instance.stopSession();
+        } catch (stopError) {
+          print('⚠️ Error stopping session: $stopError');
+        }
+        return null;
+      }
     } catch (e) {
       print('❌ Error in readNFCTag: $e');
-      await NfcManager.instance.stopSession();
+      try {
+        await NfcManager.instance.stopSession();
+      } catch (stopError) {
+        print('⚠️ Error stopping session in catch: $stopError');
+      }
       return null;
     }
   }

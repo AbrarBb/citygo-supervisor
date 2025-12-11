@@ -34,6 +34,10 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
   void initState() {
     super.initState();
     _checkNFCAvailability();
+    // Start NFC session when screen loads to intercept tags
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prepareNFCSession();
+    });
   }
 
   Future<void> _checkNFCAvailability() async {
@@ -44,6 +48,34 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
         _statusText = 'NFC Not Available';
       });
     }
+  }
+
+  /// Prepare NFC session to intercept tags (without reading yet)
+  Future<void> _prepareNFCSession() async {
+    try {
+      final nfcService = ref.read(nfcServiceProvider);
+      // Check if NFC is available
+      final isAvailable = await nfcService.isAvailable();
+      if (!isAvailable) {
+        print('⚠️ NFC not available on this device');
+        return;
+      }
+      print('✅ NFC is available, ready to read tags');
+    } catch (e) {
+      print('⚠️ Error preparing NFC session: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    // Stop any active NFC sessions when screen is disposed
+    try {
+      final nfcService = ref.read(nfcServiceProvider);
+      nfcService.stopSession();
+    } catch (e) {
+      print('⚠️ Error stopping NFC session: $e');
+    }
+    super.dispose();
   }
 
   Future<void> _startScan() async {
