@@ -225,6 +225,8 @@ class _SyncCenterScreenState extends ConsumerState<SyncCenterScreen> {
                     fontWeight: FontWeight.w600,
                     color: AppTheme.textPrimary,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
                 const SizedBox(height: AppTheme.spacingXS),
                 Text(
@@ -233,6 +235,7 @@ class _SyncCenterScreenState extends ConsumerState<SyncCenterScreen> {
                     fontSize: 12,
                     color: AppTheme.textSecondary,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
                 if (type == 'nfc') ...[
                   const SizedBox(height: AppTheme.spacingXS),
@@ -242,6 +245,8 @@ class _SyncCenterScreenState extends ConsumerState<SyncCenterScreen> {
                       fontSize: 12,
                       color: AppTheme.textTertiary,
                     ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ] else ...[
                   const SizedBox(height: AppTheme.spacingXS),
@@ -251,6 +256,8 @@ class _SyncCenterScreenState extends ConsumerState<SyncCenterScreen> {
                       fontSize: 12,
                       color: AppTheme.textTertiary,
                     ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ],
               ],

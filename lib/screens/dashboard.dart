@@ -431,12 +431,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 ),
                 const SizedBox(height: AppTheme.spacingSM),
-                Text(
-                  error.toString().replaceFirst('Exception: ', ''),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingMD),
+                  child: Text(
+                    error.toString().replaceFirst('Exception: ', ''),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textSecondary,
+                    ),
+                    overflow: TextOverflow.visible,
+                    maxLines: 5,
                   ),
                 ),
                 const SizedBox(height: AppTheme.spacingLG),
@@ -507,20 +512,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  busInfo.routeNumber ?? busInfo.route?.name ?? 'Bus Route',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
+                Flexible(
+                  child: Text(
+                    busInfo.routeNumber ?? busInfo.route?.name ?? 'Bus Route',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textPrimary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
                 const SizedBox(height: AppTheme.spacingXS),
-                Text(
-                  busInfo.licensePlate,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
+                Flexible(
+                  child: Text(
+                    busInfo.licensePlate,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textSecondary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
               ],
@@ -664,18 +677,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                '65% Complete',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
+              Flexible(
+                child: Text(
+                  '65% Complete',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Text(
-                '13 / 20 Stops',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
+              Flexible(
+                child: Text(
+                  '13 / 20 Stops',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
                 ),
               ),
             ],

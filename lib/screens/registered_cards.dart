@@ -210,11 +210,15 @@ class RegisteredCardsScreen extends ConsumerWidget {
                   color: AppTheme.textSecondary,
                 ),
                 const SizedBox(width: AppTheme.spacingXS),
-                Text(
-                  card.passengerName!,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
+                Expanded(
+                  child: Text(
+                    card.passengerName!,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textSecondary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
               ],

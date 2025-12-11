@@ -11,7 +11,7 @@
         android:required="false" />
     
     <application
-        android:label="flutter_application_1"
+        android:label="CityGo Supervisor"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
