@@ -88,16 +88,19 @@ class NFCService {
                               final text = String.fromCharCodes(textBytes);
                               
                               // Check if text contains RC- format (card ID)
-                              if (text.startsWith('RC-')) {
+                              // Preserve original case - backend might be case-sensitive
+                              if (text.startsWith('RC-') || text.startsWith('rc-')) {
+                                // Only trim whitespace, preserve case
                                 nfcId = text.trim();
-                                print('✅ Found card ID in NDEF text record: $nfcId');
+                                print('✅ Found card ID in NDEF text record: "$nfcId" (preserving case)');
                                 break;
-                              } else if (text.contains('RC-')) {
-                                // Extract RC-XXXXX from text
-                                final match = RegExp(r'RC-[A-Fa-f0-9]+').firstMatch(text);
+                              } else if (text.contains('RC-') || text.contains('rc-')) {
+                                // Extract RC-XXXXX from text (case-insensitive match, but preserve original case)
+                                final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]+').firstMatch(text);
                                 if (match != null) {
-                                  nfcId = match.group(0);
-                                  print('✅ Extracted card ID from NDEF text: $nfcId');
+                                  // Preserve original case from NFC tag
+                                  nfcId = match.group(0)!.trim();
+                                  print('✅ Extracted card ID from NDEF text: "$nfcId" (preserving case)');
                                   break;
                                 }
                               }
@@ -130,15 +133,18 @@ class NFCService {
                           if (payload != null && payload.isNotEmpty) {
                             final textBytes = payload.skip(1).toList();
                             final text = String.fromCharCodes(textBytes);
-                            if (text.startsWith('RC-')) {
-                              nfcId = text.trim().toLowerCase();
-                              print('✅ Found card ID in NDEF: $nfcId');
+                            if (text.startsWith('RC-') || text.startsWith('rc-')) {
+                              // Only trim whitespace, preserve case
+                              nfcId = text.trim();
+                              print('✅ Found card ID in NDEF: "$nfcId" (preserving case)');
                               break;
-                            } else if (text.contains('RC-')) {
-                              final match = RegExp(r'RC-[A-Fa-f0-9]+').firstMatch(text);
+                            } else if (text.contains('RC-') || text.contains('rc-')) {
+                              // Extract RC-XXXXX from text (case-insensitive match, but preserve original case)
+                              final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]+').firstMatch(text);
                               if (match != null) {
-                                nfcId = match.group(0)!.toLowerCase();
-                                print('✅ Extracted card ID from NDEF: $nfcId');
+                                // Preserve original case from NFC tag
+                                nfcId = match.group(0)!.trim();
+                                print('✅ Extracted card ID from NDEF: "$nfcId" (preserving case)');
                                 break;
                               }
                             }
@@ -273,10 +279,15 @@ class NFCService {
               print('⚠️ No card ID found, using fallback: $nfcId');
             }
 
-            // Normalize card ID: trim and convert to lowercase for consistency
+            // Only trim whitespace, preserve original case from NFC tag
+            // Backend might be case-sensitive and expect exact format from NFC tag
             // At this point, nfcId is guaranteed to be non-null
-            nfcId = nfcId!.trim().toLowerCase();
-            print('📱 Final card ID (normalized): $nfcId');
+            final originalId = nfcId;
+            final trimmedId = nfcId!.trim();
+            nfcId = trimmedId;
+            print('📱 Final card ID (trimmed, preserving case): "$trimmedId" (original: "$originalId")');
+            print('📱 Card ID length: ${trimmedId.length} characters');
+            print('📱 Card ID bytes: ${trimmedId.codeUnits}');
             
             // Complete the future with the card ID
             if (!completer.isCompleted) {

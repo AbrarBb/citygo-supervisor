@@ -371,18 +371,24 @@ class ApiService {
 
   /// NFC Tap-In - POST /nfc-tap-in
   Future<NfcTapResponse> tapIn(NfcEvent event) async {
+    // Only trim whitespace, preserve original case from NFC tag
+    // Backend might be case-sensitive and expect exact format from NFC tag
+    final trimmedCardId = event.cardId.trim();
+    
+    // Try original case first
     try {
-      // Normalize card ID: trim and lowercase for consistency with backend
-      final normalizedCardId = event.cardId.trim().toLowerCase();
-      print('📤 Sending tap-in request:');
-      print('   Card ID: "$normalizedCardId" (original: "${event.cardId}")');
+      print('📤 Sending tap-in request (original case):');
+      print('   Card ID: "$trimmedCardId" (original: "${event.cardId}")');
+      print('   Card ID length: ${trimmedCardId.length}');
+      print('   Card ID bytes: ${trimmedCardId.codeUnits}');
       print('   Bus ID: ${event.busId}');
       print('   Location: ${event.latitude}, ${event.longitude}');
+      print('   Full request URL: ${_dio.options.baseUrl}/nfc-tap-in');
       
       final response = await _dio.post(
         '/nfc-tap-in',
         data: {
-          'card_id': normalizedCardId,
+          'card_id': trimmedCardId,
           'bus_id': event.busId,
           'location': {
             'lat': event.latitude,
@@ -394,27 +400,72 @@ class ApiService {
       print('✅ Tap-in successful: ${response.data}');
       return NfcTapResponse.fromJson(response.data);
     } on DioException catch (e) {
+      // If "Card not registered" error, try lowercase version as fallback
+      final errorMessage = e.response?.data?['message']?.toString().toLowerCase() ?? 
+                          e.response?.data?['error']?.toString().toLowerCase() ?? '';
+      
+      if ((e.response?.statusCode == 404 || errorMessage.contains('not registered') || 
+           errorMessage.contains('card not found')) && 
+          trimmedCardId != trimmedCardId.toLowerCase()) {
+        // Try lowercase version
+        final lowerCardId = trimmedCardId.toLowerCase();
+        print('⚠️ Original case failed, trying lowercase: "$lowerCardId"');
+        try {
+          final response = await _dio.post(
+            '/nfc-tap-in',
+            data: {
+              'card_id': lowerCardId,
+              'bus_id': event.busId,
+              'location': {
+                'lat': event.latitude,
+                'lng': event.longitude,
+              },
+              if (event.offlineId != null) 'offline_id': event.offlineId,
+            },
+          );
+          print('✅ Tap-in successful with lowercase card ID: ${response.data}');
+          return NfcTapResponse.fromJson(response.data);
+        } catch (e2) {
+          // If lowercase also fails, throw original error
+          print('❌ Lowercase also failed, throwing original error');
+        }
+      }
+      
       print('❌ Tap-in failed:');
       print('   Status: ${e.response?.statusCode}');
+      print('   Request URL: ${e.requestOptions.uri}');
+      print('   Request data: ${e.requestOptions.data}');
       print('   Response: ${e.response?.data}');
+      print('   Error message: ${e.message}');
+      // Log the exact card ID that was sent
+      if (e.requestOptions.data is Map) {
+        final requestData = e.requestOptions.data as Map;
+        print('   Card ID sent: "${requestData['card_id']}"');
+      }
       throw _handleError(e);
     }
   }
 
   /// NFC Tap-Out - POST /nfc-tap-out
   Future<NfcTapResponse> tapOut(NfcEvent event) async {
+    // Only trim whitespace, preserve original case from NFC tag
+    // Backend might be case-sensitive and expect exact format from NFC tag
+    final trimmedCardId = event.cardId.trim();
+    
+    // Try original case first
     try {
-      // Normalize card ID: trim and lowercase for consistency with backend
-      final normalizedCardId = event.cardId.trim().toLowerCase();
-      print('📤 Sending tap-out request:');
-      print('   Card ID: "$normalizedCardId" (original: "${event.cardId}")');
+      print('📤 Sending tap-out request (original case):');
+      print('   Card ID: "$trimmedCardId" (original: "${event.cardId}")');
+      print('   Card ID length: ${trimmedCardId.length}');
+      print('   Card ID bytes: ${trimmedCardId.codeUnits}');
       print('   Bus ID: ${event.busId}');
       print('   Location: ${event.latitude}, ${event.longitude}');
+      print('   Full request URL: ${_dio.options.baseUrl}/nfc-tap-out');
       
       final response = await _dio.post(
         '/nfc-tap-out',
         data: {
-          'card_id': normalizedCardId,
+          'card_id': trimmedCardId,
           'bus_id': event.busId,
           'location': {
             'lat': event.latitude,
@@ -426,9 +477,48 @@ class ApiService {
       print('✅ Tap-out successful: ${response.data}');
       return NfcTapResponse.fromJson(response.data);
     } on DioException catch (e) {
+      // If "Card not registered" error, try lowercase version as fallback
+      final errorMessage = e.response?.data?['message']?.toString().toLowerCase() ?? 
+                          e.response?.data?['error']?.toString().toLowerCase() ?? '';
+      
+      if ((e.response?.statusCode == 404 || errorMessage.contains('not registered') || 
+           errorMessage.contains('card not found')) && 
+          trimmedCardId != trimmedCardId.toLowerCase()) {
+        // Try lowercase version
+        final lowerCardId = trimmedCardId.toLowerCase();
+        print('⚠️ Original case failed, trying lowercase: "$lowerCardId"');
+        try {
+          final response = await _dio.post(
+            '/nfc-tap-out',
+            data: {
+              'card_id': lowerCardId,
+              'bus_id': event.busId,
+              'location': {
+                'lat': event.latitude,
+                'lng': event.longitude,
+              },
+              if (event.offlineId != null) 'offline_id': event.offlineId,
+            },
+          );
+          print('✅ Tap-out successful with lowercase card ID: ${response.data}');
+          return NfcTapResponse.fromJson(response.data);
+        } catch (e2) {
+          // If lowercase also fails, throw original error
+          print('❌ Lowercase also failed, throwing original error');
+        }
+      }
+      
       print('❌ Tap-out failed:');
       print('   Status: ${e.response?.statusCode}');
+      print('   Request URL: ${e.requestOptions.uri}');
+      print('   Request data: ${e.requestOptions.data}');
       print('   Response: ${e.response?.data}');
+      print('   Error message: ${e.message}');
+      // Log the exact card ID that was sent
+      if (e.requestOptions.data is Map) {
+        final requestData = e.requestOptions.data as Map;
+        print('   Card ID sent: "${requestData['card_id']}"');
+      }
       throw _handleError(e);
     }
   }
