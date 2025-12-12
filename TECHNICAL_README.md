@@ -184,8 +184,8 @@ lib/
             │   Success    │    │    Error     │
             │  (JWT Token) │    │  (401/400)   │
             └──────┬───────┘    └──────┬───────┘
-                   │                  │
-                   ▼                  ▼
+                   │                   │
+                   ▼                   ▼
         ┌──────────────────┐  ┌──────────────────┐
         │ Flutter Secure   │  │  Error Snackbar  │
         │ Storage (JWT)    │  │  (UI Feedback)   │
@@ -344,8 +344,8 @@ _dio.interceptors.add(InterceptorsWrapper(
 │ API Call  │     │  Save to │
 │ (Tap-In)  │     │  LocalDB │
 └────┬──────┘     └────┬─────┘
-     │               │
-     ▼               ▼
+     │                 │
+     ▼                 ▼
 ┌───────────┐     ┌──────────┐
 │ Show      │     │ Mark as  │
 │ Success   │     │ Unsynced │
