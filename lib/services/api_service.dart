@@ -285,6 +285,7 @@ class ApiService {
           ],
         ),
         status: 'active',
+        capacity: 40, // Always 40 seats to match webapp
       );
     }
     
@@ -344,6 +345,8 @@ class ApiService {
       }
       // Add is_active from the root response
       combinedData['is_active'] = isActive;
+      // Always override capacity to 40 to match webapp
+      combinedData['capacity'] = 40;
       
       try {
         final busInfo = BusInfo.fromJson(combinedData);
@@ -527,23 +530,23 @@ class ApiService {
   Future<TicketResponse> issueManualTicket(ManualTicket ticket) async {
     try {
       // Try different possible endpoints
+      // Backend edge function is at /manual-ticket
       List<String> possibleEndpoints = [
+        '/manual-ticket', // Primary endpoint (backend edge function)
         '/supervisor-manual-ticket',
-        '/manual-ticket',
         '/tickets',
       ];
       
-      // Prepare request data with multiple format options
+      // Prepare request data matching backend expectations
       final requestData = {
         'bus_id': ticket.busId,
         'passenger_count': ticket.passengerCount,
         'fare': ticket.fare,
-        'latitude': ticket.latitude,
-        'longitude': ticket.longitude,
-        'issued_at': ticket.timestamp.toIso8601String(),
+        'timestamp': ticket.timestamp.toIso8601String(), // Backend expects 'timestamp'
         if (ticket.notes != null && ticket.notes!.isNotEmpty) 'notes': ticket.notes,
         if (ticket.offlineId != null) 'offline_id': ticket.offlineId,
-        // Additional fields that might be expected
+        if (ticket.seatNumber != null) 'seat_number': ticket.seatNumber, // Backend will create booking
+        if (ticket.dropStopId != null) 'drop_stop_id': ticket.dropStopId, // Drop-off stop for booking
         'ticket_type': 'single',
         'payment_method': 'cash',
         'location': {
@@ -551,6 +554,10 @@ class ApiService {
           'lng': ticket.longitude,
         },
       };
+      
+      print('🎫 Manual ticket request includes: seat_number=${ticket.seatNumber}, drop_stop_id=${ticket.dropStopId}');
+      
+      print('🎫 Manual ticket request: seat_number=${ticket.seatNumber}, booking seat (not releasing)');
       
       DioException? lastError;
       
@@ -580,6 +587,13 @@ class ApiService {
                                dataMap['message'] as String? ?? 
                                'Failed to issue ticket';
                 throw Exception(errorMsg);
+              }
+              
+              // Log booking info if present
+              if (dataMap['booking'] != null) {
+                print('✅ Booking created in response: ${dataMap['booking']}');
+              } else {
+                print('⚠️ No booking info in response (seat_number was ${ticket.seatNumber})');
               }
               
               // Return response
@@ -793,14 +807,11 @@ class ApiService {
       } else {
         print('⚠️ No bus_id provided - backend will use assigned bus');
       }
-      // Only add date if explicitly provided - don't filter by default
-      if (date != null) {
-        final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-        queryParams['date'] = dateStr;
-        print('📦 Added date to query: $dateStr');
-      } else {
-        print('📦 No date filter - requesting all bookings');
-      }
+      
+      // Try without date filter first - get all bookings and filter client-side
+      // This ensures we get bookings even if backend filtering is incorrect
+      print('📦 No date filter - requesting all bookings (will filter client-side for active journey)');
+      print('📦 Full request URL will be: ${_dio.options.baseUrl}${possibleEndpoints.first}?${queryParams.entries.map((e) => '${e.key}=${e.value}').join('&')}');
       
       DioException? lastError;
       for (final endpoint in possibleEndpoints) {
@@ -820,6 +831,8 @@ class ApiService {
           );
           print('✅ Response status: ${response.statusCode}');
           print('✅ Response from: $endpoint');
+          print('📋 Request URL: ${response.requestOptions.uri}');
+          print('📋 Request method: ${response.requestOptions.method}');
           print('📋 Response headers: ${response.headers}');
           
           if (response.data != null) {
@@ -829,11 +842,21 @@ class ApiService {
             
             // Log if bookings array exists and its length
             if (data is Map) {
+              final keys = data.keys.toList();
+              print('📋 Response keys: $keys');
               final bookingsCount = (data['bookings'] as List?)?.length ?? -1;
               print('📊 Bookings array length in response: $bookingsCount');
               if (bookingsCount == 0) {
                 print('⚠️ Bookings array is empty - this might be correct if no bookings exist');
+                print('⚠️ Check if bookings exist in database for bus_id: ${queryParams['bus_id']}');
               }
+              if (!keys.contains('bookings') && !keys.contains('seats')) {
+                print('⚠️ WARNING: Response does not contain "bookings" or "seats" key!');
+                print('⚠️ Available keys: $keys');
+              }
+            } else if (data is List) {
+              print('⚠️ WARNING: Response is a List (length: ${data.length}), not a Map!');
+              print('⚠️ Expected Map with "bookings" key, got List instead');
             }
             
             // Handle different response formats
@@ -880,9 +903,18 @@ class ApiService {
               if (bookingsList != null && bookingsList.isNotEmpty) {
                 print('📋 First booking sample: ${bookingsList.first}');
                 print('📋 All bookings: $bookingsList');
+                // Log each booking's seat number and status
+                for (var i = 0; i < bookingsList.length && i < 5; i++) {
+                  final booking = bookingsList[i] as Map<String, dynamic>;
+                  print('   Booking ${i + 1}: seat=${booking['seat_number'] ?? booking['seat_no'] ?? booking['seat'] ?? 'N/A'}, status=${booking['status'] ?? 'N/A'}, name=${booking['passenger_name'] ?? booking['name'] ?? 'N/A'}');
+                }
               } else if (bookingsList != null && bookingsList.isEmpty) {
                 print('⚠️ Bookings array is empty - no bookings found');
                 print('📋 Response stats: total_seats=${bookingsData['total_seats']}, booked_seats=${bookingsData['booked_seats']}');
+                print('📋 Check if bookings exist in database for this bus');
+              } else {
+                print('⚠️ Bookings array is null - check response structure');
+                print('📋 Available keys in response: ${bookingsData.keys.toList()}');
               }
               
               print('✅ Parsing bookings data...');
@@ -998,17 +1030,264 @@ class ApiService {
     }
   }
 
+  /// Check Card Registration - GET /cards/{cardId} or /registered-cards/{cardId}
+  /// Returns card info if registered, null if not registered
+  Future<RegisteredCard?> checkCardRegistration(String cardId) async {
+    try {
+      final trimmedCardId = cardId.trim();
+      print('🔍 Checking card registration: "$trimmedCardId"');
+      print('🔍 Card ID length: ${trimmedCardId.length}');
+      print('🔍 Card ID bytes: ${trimmedCardId.codeUnits}');
+      
+      // URL encode the card ID to handle special characters
+      final encodedCardId = Uri.encodeComponent(trimmedCardId);
+      print('🔍 URL encoded card ID: "$encodedCardId"');
+      
+      // Try different possible endpoints (path parameter)
+      // Backend now supports /registered-cards/{cardId} with case-insensitive matching
+      List<String> possibleEndpoints = [
+        '/registered-cards/$encodedCardId', // Primary endpoint (backend supports this)
+        '/registered-cards/$trimmedCardId', // Without encoding
+        '/cards/$encodedCardId',
+        '/cards/$trimmedCardId',
+        '/nfc-cards/$encodedCardId',
+        '/nfc-cards/$trimmedCardId',
+        '/passenger-cards/$encodedCardId',
+        '/passenger-cards/$trimmedCardId',
+      ];
+      
+      // Also try query parameter approach
+      // Backend now supports /registered-cards?card_id={cardId} with case-insensitive matching
+      List<Map<String, String>> queryEndpoints = [
+        {'path': '/registered-cards', 'param': 'card_id'}, // Primary query endpoint
+        {'path': '/registered-cards', 'param': 'nfc_id'},
+        {'path': '/cards', 'param': 'card_id'},
+        {'path': '/cards', 'param': 'nfc_id'},
+        {'path': '/nfc-cards', 'param': 'card_id'},
+        {'path': '/nfc-cards', 'param': 'nfc_id'},
+        {'path': '/passenger-cards', 'param': 'card_id'},
+        {'path': '/passenger-cards', 'param': 'nfc_id'},
+      ];
+      
+      // First try path parameter endpoints
+      for (final endpoint in possibleEndpoints) {
+        try {
+          print('🔍 Trying endpoint (path param): $endpoint');
+          print('🔍 Full URL: ${_dio.options.baseUrl}$endpoint');
+          final response = await _dio.get(endpoint);
+          print('✅ Card check response status: ${response.statusCode}');
+          print('📦 Card check response data: ${response.data}');
+          
+          if (response.data != null) {
+            final data = response.data;
+            Map<String, dynamic> cardData;
+            
+            // Handle different response formats
+            if (data is Map) {
+              cardData = Map<String, dynamic>.from(data);
+            } else if (data is List && data.isNotEmpty) {
+              cardData = Map<String, dynamic>.from(data[0] as Map);
+            } else {
+              print('⚠️ Unknown response format, trying next endpoint');
+              continue;
+            }
+            
+            // Ensure card_id is set from the cardId parameter if not in response
+            if (cardData['card_id'] == null && 
+                cardData['nfc_id'] == null && 
+                cardData['id'] == null) {
+              cardData['card_id'] = trimmedCardId;
+              print('📝 Added card_id from parameter: $trimmedCardId');
+            }
+            
+            print('📦 Parsing card data: ${cardData.keys.toList()}');
+            final card = RegisteredCard.fromJson(cardData);
+            print('✅ Card found: ${card.passengerName ?? "Unknown"} (${card.cardId})');
+            print('   Balance: ${card.balance}, Status: ${card.status}');
+            return card;
+          }
+        } on DioException catch (e) {
+          print('❌ Endpoint $endpoint failed: ${e.response?.statusCode} - ${e.message}');
+          if (e.response?.statusCode == 404) {
+            print('   404 - Card not found, trying next endpoint...');
+            continue;
+          }
+          // For other errors, try next endpoint
+          continue;
+        } catch (e) {
+          print('❌ Error with endpoint $endpoint: $e');
+          continue;
+        }
+      }
+      
+      // If path parameter endpoints fail, try query parameter approach
+      for (final endpointInfo in queryEndpoints) {
+        try {
+          final endpoint = '${endpointInfo['path']}?${endpointInfo['param']}=$encodedCardId';
+          print('🔍 Trying endpoint (query param): $endpoint');
+          print('🔍 Full URL: ${_dio.options.baseUrl}$endpoint');
+          final response = await _dio.get(endpoint);
+          
+          print('✅ Card check response status: ${response.statusCode}');
+          print('📦 Card check response data: ${response.data}');
+          
+          if (response.data != null) {
+            final data = response.data;
+            Map<String, dynamic> cardData;
+            
+            // Handle different response formats
+            if (data is Map) {
+              cardData = Map<String, dynamic>.from(data);
+            } else if (data is List && data.isNotEmpty) {
+              cardData = Map<String, dynamic>.from(data[0] as Map);
+            } else {
+              print('⚠️ Unknown response format, trying next endpoint');
+              continue;
+            }
+            
+            // Ensure card_id is set from the cardId parameter if not in response
+            if (cardData['card_id'] == null && 
+                cardData['nfc_id'] == null && 
+                cardData['id'] == null) {
+              cardData['card_id'] = trimmedCardId;
+              print('📝 Added card_id from parameter: $trimmedCardId');
+            }
+            
+            print('📦 Parsing card data: ${cardData.keys.toList()}');
+            final card = RegisteredCard.fromJson(cardData);
+            print('✅ Card found (query param): ${card.passengerName ?? "Unknown"} (${card.cardId})');
+            print('   Balance: ${card.balance}, Status: ${card.status}');
+            return card;
+          }
+        } on DioException catch (e) {
+          print('❌ Endpoint ${endpointInfo['path']} failed: ${e.response?.statusCode} - ${e.message}');
+          if (e.response?.statusCode == 404) {
+            print('   404 - Card not found, trying next endpoint...');
+            continue;
+          }
+          continue;
+        } catch (e) {
+          print('❌ Error with endpoint ${endpointInfo['path']}: $e');
+          continue;
+        }
+      }
+      
+      // If all endpoints fail, try lowercase version
+      final lowercaseCardId = trimmedCardId.toLowerCase();
+      if (lowercaseCardId != trimmedCardId) {
+        print('🔍 Trying lowercase version: "$lowercaseCardId"');
+        final encodedLowerCardId = Uri.encodeComponent(lowercaseCardId);
+        List<String> lowercaseEndpoints = [
+          '/cards/$encodedLowerCardId',
+          '/registered-cards/$encodedLowerCardId',
+          '/nfc-cards/$encodedLowerCardId',
+          '/passenger-cards/$encodedLowerCardId',
+          '/cards/$lowercaseCardId',
+          '/registered-cards/$lowercaseCardId',
+          '/nfc-cards/$lowercaseCardId',
+          '/passenger-cards/$lowercaseCardId',
+        ];
+        for (final endpoint in lowercaseEndpoints) {
+          try {
+            print('🔍 Trying endpoint: $endpoint');
+            print('🔍 Full URL: ${_dio.options.baseUrl}$endpoint');
+            final response = await _dio.get(endpoint);
+            
+            if (response.data != null) {
+              final data = response.data;
+              Map<String, dynamic> cardData;
+              
+              if (data is Map) {
+                cardData = Map<String, dynamic>.from(data);
+              } else if (data is List && data.isNotEmpty) {
+                cardData = Map<String, dynamic>.from(data[0] as Map);
+              } else {
+                continue;
+              }
+              
+              final card = RegisteredCard.fromJson(cardData);
+              print('✅ Card found with lowercase: ${card.passengerName ?? "Unknown"} (${card.cardId})');
+              return card;
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+      
+      print('⚠️ Card not found in any endpoint');
+      return null;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        print('⚠️ Card not registered (404)');
+        return null;
+      }
+      print('❌ Error checking card registration: ${e.message}');
+      throw _handleError(e);
+    } catch (e) {
+      print('❌ Error checking card registration: $e');
+      rethrow;
+    }
+  }
+
   /// Get Daily Reports - GET /supervisor-reports
-  Future<ReportResponse> getReport({required DateTime date}) async {
+  Future<ReportResponse> getReport({required DateTime date, bool forceRefresh = false}) async {
     try {
       final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      print('📊 Fetching report for date: $dateStr (forceRefresh: $forceRefresh)');
+      
+      // Add cache-busting parameter if force refresh
+      final queryParams = <String, dynamic>{'date': dateStr};
+      if (forceRefresh) {
+        queryParams['_t'] = DateTime.now().millisecondsSinceEpoch.toString();
+      }
+      
+      print('📊 Full URL: $baseUrl/supervisor-reports?${queryParams.entries.map((e) => '${e.key}=${e.value}').join('&')}');
+      
       final response = await _dio.get(
         '/supervisor-reports',
-        queryParameters: {'date': dateStr},
+        queryParameters: queryParams,
+        options: Options(
+          // Disable HTTP caching
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+          extra: {'noCache': true},
+        ),
       );
-      return ReportResponse.fromJson(response.data);
+      
+      print('📊 Report API Response Status: ${response.statusCode}');
+      print('📊 Report API Response Data: ${response.data}');
+      print('📊 Report API Response Data Type: ${response.data.runtimeType}');
+      
+      if (response.data == null) {
+        print('❌ Report API returned null data');
+        throw Exception('No report data received from server');
+      }
+      
+      // Log the raw data structure
+      if (response.data is Map) {
+        final dataMap = response.data as Map<String, dynamic>;
+        print('📊 Report API Response Keys: ${dataMap.keys.toList()}');
+        print('📊 Report API trip_count: ${dataMap['trip_count']}');
+        print('📊 Report API passenger_count: ${dataMap['passenger_count']}');
+        print('📊 Report API total_fare: ${dataMap['total_fare']}');
+        print('📊 Report API total_fare_collected: ${dataMap['total_fare_collected']}');
+      }
+      
+      final report = ReportResponse.fromJson(response.data);
+      print('📊 Parsed Report: tapIns=${report.tapInCount}, tapOuts=${report.tapOutCount}, fare=${report.totalFare}, trips=${report.tripCount}, passengers=${report.passengerCount}');
+      
+      return report;
     } on DioException catch (e) {
+      print('❌ Report API Error: ${e.message}');
+      print('❌ Response: ${e.response?.data}');
       throw _handleError(e);
+    } catch (e) {
+      print('❌ Report Parsing Error: $e');
+      rethrow;
     }
   }
 

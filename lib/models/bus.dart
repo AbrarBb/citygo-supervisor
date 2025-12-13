@@ -134,7 +134,8 @@ class BusInfo {
           ? RouteInfo.fromJson(json['route'] as Map<String, dynamic>)
           : null,
       status: json['status'] as String?,
-      capacity: json['capacity'] as int?,
+      // Always use 40 seats to match webapp, regardless of what backend returns
+      capacity: 40,
       currentLocation: _parseCurrentLocation(json['current_location']),
       driverInfo: json['driverInfo'] as Map<String, dynamic>? ?? 
                   json['driver_info'] as Map<String, dynamic>?,

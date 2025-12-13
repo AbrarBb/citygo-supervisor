@@ -33,10 +33,10 @@ final busProvider = FutureProvider<BusInfo?>((ref) async {
   try {
     print('🚌 Fetching bus data from API...');
     final busInfo = await apiService.getAssignedBus().timeout(
-      const Duration(seconds: 10), // Increased timeout
+      const Duration(seconds: 15), // Increased timeout to 15 seconds
       onTimeout: () {
         print('⏱️ Bus API request timed out');
-        throw TimeoutException('Request timeout', const Duration(seconds: 10));
+        throw TimeoutException('Request timeout', const Duration(seconds: 15));
       },
     );
     
@@ -174,6 +174,7 @@ BusInfo _getMockBusData() {
       ],
     ),
     status: 'active',
+    capacity: 40, // Always 40 seats to match webapp
     isActive: true,
   );
 }

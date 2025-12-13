@@ -31,6 +31,7 @@ class BookingsScreen extends ConsumerWidget {
             onPressed: () {
               ref.invalidate(busBookingsProvider(busId));
             },
+            tooltip: 'Refresh',
           ),
         ],
       ),
@@ -91,6 +92,9 @@ class BookingsScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Date Info Card
+                  _buildDateInfoCard(),
+                  
                   // Debug Info Card (always show for debugging)
                   _buildDebugCard(bookings),
                   
@@ -479,7 +483,7 @@ class BookingsScreen extends ConsumerWidget {
 
   Widget _buildBookingsList(BusBookings bookings) {
     // Show ALL bookings, not just filtered ones - helps with debugging
-    // Include all bookings regardless of status (booked, occupied, confirmed, or any other)
+    // Include all bookings regardless of status (backend uses 'confirmed', app normalizes to 'booked' for display)
     final allBookings = bookings.bookings.toList()
       ..sort((a, b) {
         // Sort by seat number, but put invalid seats (0 or out of range) at the end
@@ -572,6 +576,57 @@ class BookingsScreen extends ConsumerWidget {
     );
   }
 
+  Widget _buildDateInfoCard() {
+    final today = DateTime.now();
+    final dateStr = DateFormat('EEEE, MMMM dd, yyyy').format(today);
+    
+    return CityGoCard(
+      padding: const EdgeInsets.all(AppTheme.spacingMD),
+      margin: const EdgeInsets.only(bottom: AppTheme.spacingMD),
+      child: Row(
+        children: [
+          Icon(
+            Icons.directions_bus,
+            color: AppTheme.primaryGreen,
+            size: 20,
+          ),
+          const SizedBox(width: AppTheme.spacingSM),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Current Active Journey:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                Text(
+                  dateStr,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Showing today\'s bookings only',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textTertiary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDebugCard(BusBookings bookings) {
     final validBookings = bookings.bookings.where((b) => 
       b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats
@@ -648,7 +703,7 @@ class BookingsScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Seat ${b.seatNumber}: ${b.passengerName ?? "N/A"} (${b.status})',
+                    'Seat ${b.seatNumber}: ${b.passengerName ?? "N/A"} (${b.status})${b.dropStop != null ? " → ${b.dropStop}" : ""}',
                     style: TextStyle(
                       fontSize: 11, 
                       color: (b.seatNumber > 0 && b.seatNumber <= bookings.totalSeats) 
@@ -787,6 +842,27 @@ class BookingsScreen extends ConsumerWidget {
                         style: const TextStyle(
                           fontSize: 12,
                           color: AppTheme.textTertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (booking.dropStop != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.location_on,
+                        size: 12,
+                        color: AppTheme.accentCyanReal,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Drop: ${booking.dropStop}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.accentCyanReal,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],

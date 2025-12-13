@@ -6,16 +6,21 @@
 2. [Architecture](#architecture)
 3. [Authentication Flow](#authentication-flow)
 4. [Data Flow](#data-flow)
-5. [Core Services](#core-services)
-6. [State Management](#state-management)
-7. [NFC Integration](#nfc-integration)
-8. [Offline Sync Mechanism](#offline-sync-mechanism)
-9. [API Integration](#api-integration)
-10. [Database Schema](#database-schema)
-11. [UI Components](#ui-components)
-12. [Platform-Specific Configuration](#platform-specific-configuration)
-13. [Build & Deployment](#build--deployment)
-14. [Troubleshooting](#troubleshooting)
+5. [Dashboard Data Flow](#dashboard-data-flow)
+6. [Core Services](#core-services)
+7. [State Management](#state-management)
+8. [NFC Integration](#nfc-integration)
+9. [Offline Sync Mechanism](#offline-sync-mechanism)
+10. [API Integration](#api-integration)
+11. [Database Schema](#database-schema)
+12. [UI Components](#ui-components)
+13. [Platform-Specific Configuration](#platform-specific-configuration)
+14. [Build & Deployment](#build--deployment)
+15. [Troubleshooting](#troubleshooting)
+16. [Manual Ticket Feature](#manual-ticket-feature)
+17. [Reports Screen](#reports-screen)
+18. [Profile & Help Support](#profile--help-support)
+19. [Testing](#testing)
 
 ---
 
@@ -28,10 +33,15 @@
 - 🔐 **JWT-based Authentication** with secure token storage
 - 🚌 **Bus & Route Management** with real-time status tracking
 - 📍 **NFC Card Reading** (NTAG216 and other formats)
-- 🎫 **Manual Ticket Issuance** with passenger count
+- 🔍 **Card Registration Check** - Verify card registration and view passenger info
+- 🎫 **Manual Ticket Issuance** with passenger count and seat selection (1-40)
 - 🔄 **Offline-First Architecture** with automatic sync
-- 📊 **Daily Reports** with statistics and hourly breakdown
+- 📊 **Daily Reports** with statistics and hourly breakdown (with force refresh)
 - 🗺️ **Google Maps Integration** for route visualization
+- 📈 **Real-Time Trip Progress** - Calculated from actual bus location and stops
+- 👥 **Real-Time Passenger Counting** - Prioritizes API `bookedSeats`, combines with bookings and manual tickets
+- 👤 **Profile Screen** - View user information and details
+- ❓ **Help & Support** - FAQs and developer contact
 - 📱 **Cross-Platform Support** (Android, iOS, Web, Desktop)
 
 ### Technology Stack
@@ -46,6 +56,7 @@
 | NFC Manager | NFC Tag Reading | 4.0.0 |
 | Google Maps Flutter | Maps Integration | 2.3.0 |
 | Flutter Secure Storage | Token Storage | 8.0.1 |
+| url_launcher | External URL Opening | 6.3.0 |
 
 ---
 
@@ -86,12 +97,15 @@ lib/
 │
 ├── screens/                  # UI screens (StatelessWidget/StatefulWidget)
 │   ├── login.dart           # Login screen
-│   ├── dashboard.dart        # Main dashboard with map
-│   ├── nfc_reader.dart       # NFC scanning interface
-│   ├── manual_ticket.dart   # Manual ticket form
+│   ├── dashboard.dart        # Main dashboard with map, stats, trip progress
+│   ├── nfc_reader.dart       # NFC scanning interface with card check
+│   ├── manual_ticket.dart   # Manual ticket form with seat selection
+│   ├── bookings.dart        # Bus bookings and seat map
 │   ├── sync_center.dart     # Offline sync management
-│   ├── reports.dart         # Daily reports view
+│   ├── reports.dart         # Daily reports view with date picker
 │   ├── settings.dart        # App settings
+│   ├── profile.dart         # User profile screen
+│   ├── help_support.dart    # Help & Support screen with FAQs
 │   └── registered_cards.dart # Registered cards list
 │
 ├── widgets/                 # Reusable UI components
@@ -429,6 +443,7 @@ class ManualTicket {
   final double latitude;
   final double longitude;
   final String? notes;
+  final int? seatNumber;        // Selected seat (1-40, optional)
   final DateTime timestamp;
   final bool synced;
 }
@@ -468,11 +483,17 @@ class ApiService {
   // Manual Tickets
   Future<ManualTicketResponse> issueManualTicket(ManualTicket ticket);
   
+  // Card Registration Check
+  Future<RegisteredCard?> checkCardRegistration(String cardId);
+  
+  // Bus Bookings
+  Future<BusBookings> getBusBookings({String? busId, DateTime? date});
+  
   // Sync
   Future<SyncResponse> syncEvents(List<NFCEvent> events);
   
   // Reports
-  Future<DailyReport> getDailyReport(String date);
+  Future<DailyReport> getDailyReport(String date, {bool forceRefresh = false});
 }
 ```
 
@@ -636,7 +657,8 @@ class SyncService {
 | `busProvider` | `FutureProvider<BusInfo?>` | Assigned bus information |
 | `nfcLogsProvider` | `StateNotifierProvider<NfcLogsNotifier, List<NFCEvent>>` | NFC event logs |
 | `syncProvider` | `StateNotifierProvider<SyncNotifier, SyncState>` | Sync status |
-| `reportProvider` | `FutureProvider<DailyReport?>` | Daily reports |
+| `todayReportProvider` | `FutureProvider<ReportResponse?>` | Today's daily report |
+| `busBookingsProvider` | `FutureProvider.family<BusBookings?, String>` | Bus bookings (by busId) |
 
 ### Provider Usage Example
 
@@ -661,6 +683,146 @@ void _refreshBus() {
   ref.read(busProvider.notifier).refresh();
 }
 ```
+
+---
+
+## Dashboard Data Flow
+
+### Passenger Count Calculation
+
+The dashboard calculates total passengers from multiple sources with **real-time updates**:
+
+1. **Bookings Data** (from `/supervisor-bookings` endpoint) - **PRIORITY SOURCE**
+   - Uses `bookedSeats` from API response (most reliable)
+   - Falls back to counting confirmed/booked bookings from array
+2. **Report Data** (from `/supervisor-reports` endpoint) - Fallback if bookings unavailable
+3. **Manual Tickets** (sum of `passengerCount` from today's manual tickets) - Added to total
+
+**Real-Time Calculation Logic**:
+
+```dart
+// Synchronous calculation from bookings (already loaded via ref.watch)
+int _calculatePassengersFromBookings(BusBookings? bookings, int reportPassengerCount) {
+  if (bookings == null) {
+    return reportPassengerCount; // Fallback to report
+  }
+  
+  // PRIORITY: Use bookedSeats from API first (most reliable)
+  final bookedSeatsCount = bookings.bookedSeats;
+  if (bookedSeatsCount > 0) {
+    return bookedSeatsCount; // Most accurate source
+  }
+  
+  // Fallback: Count from bookings array if bookedSeats is 0
+  if (bookings.bookings.isNotEmpty) {
+    final confirmedBookings = bookings.bookings.where((b) {
+      final status = b.status.toLowerCase();
+      return status == 'confirmed' || status == 'booked';
+    }).length;
+    return confirmedBookings > 0 ? confirmedBookings : reportPassengerCount;
+  }
+  
+  return reportPassengerCount;
+}
+
+// In dashboard build method - watches bookings provider for real-time updates
+Widget _buildStatsRow(AsyncValue<ReportResponse?> reportAsync, BusInfo? busInfo) {
+  return reportAsync.when(
+    data: (report) {
+      final bookingsAsync = ref.watch(busBookingsProvider(busInfo.id)); // Real-time watching
+      
+      return bookingsAsync.when(
+        data: (bookings) {
+          // Calculate synchronously from bookings
+          int calculatedPassengers = _calculatePassengersFromBookings(bookings, report?.passengerCount ?? 0);
+          
+          // Add manual tickets asynchronously
+          return FutureBuilder<Map<String, int>>(
+            future: _getManualTicketStats(busInfo.id),
+            builder: (context, snapshot) {
+              final manualStats = snapshot.data ?? {'passengers': 0};
+              calculatedPassengers += manualStats['passengers'] ?? 0;
+              
+              return StatCard(
+                label: 'Passengers',
+                value: calculatedPassengers.toString(),
+              );
+            },
+          );
+        },
+        // ... loading/error states
+      );
+    },
+  );
+}
+```
+
+**Key Improvements**:
+- **Real-time Updates**: Uses `ref.watch()` to automatically rebuild when bookings change
+- **Priority-Based**: Prioritizes `bookedSeats` from API (most reliable), then bookings array, then report
+- **Synchronous Calculation**: Bookings are calculated synchronously (no FutureBuilder delay)
+- **Automatic Refresh**: Dashboard refreshes bookings every 10 seconds when bus is assigned
+
+### Trip Progress Calculation
+
+Trip progress is calculated from actual bus location and route stops:
+
+1. **Get Bus Location**: From `busInfo.currentLocation` (lat/lng)
+2. **Get Route Stops**: From `busInfo.route.stops` (sorted by order)
+3. **Find Closest Stop**: Calculate distance to each stop using Haversine formula
+4. **Calculate Progress**: `(currentStopIndex + 1) / totalStops`
+
+**Progress Calculation Code**:
+
+```dart
+Widget _buildTripProgressCard(BusInfo? busInfo) {
+  final stops = busInfo?.route?.stops ?? [];
+  final totalStops = stops.length;
+  
+  // Find closest stop to bus location
+  int currentStopIndex = 0;
+  if (busInfo?.currentLocation != null && stops.isNotEmpty) {
+    final busLat = busInfo.currentLocation!['lat'];
+    final busLng = busInfo.currentLocation!['lng'];
+    
+    double minDistance = double.infinity;
+    for (int i = 0; i < stops.length; i++) {
+      final distance = _calculateDistance(busLat, busLng, stops[i].latitude, stops[i].longitude);
+      if (distance < minDistance) {
+        minDistance = distance;
+        currentStopIndex = i;
+      }
+    }
+  }
+  
+  final progress = totalStops > 0 ? (currentStopIndex + 1) / totalStops : 0.0;
+  final progressPercent = (progress * 100).toInt();
+  
+  // Display: "$progressPercent% Complete" and "$currentStop / $totalStops Stops"
+}
+```
+
+### Bus Capacity
+
+**Fixed Capacity**: All buses use **40 seats** to match the webapp, regardless of backend response.
+
+- BusInfo model always sets `capacity: 40`
+- BusBookings model always uses `totalSeats: 40`
+- Manual ticket seat selection shows seats 1-40
+
+### Real-Time Data Updates
+
+**Automatic Refresh Intervals**:
+- **Bus Assignment**: Every 5 seconds when no bus assigned, 15 seconds when bus assigned
+- **Bookings**: Every 10 seconds when bus is assigned (via `busBookingsProvider`)
+- **Reports**: Refreshed on pull-to-refresh, date change, and after manual ticket issuance
+- **Dashboard Stats**: Automatically updates when bookings provider changes (via `ref.watch()`)
+
+**Refresh Triggers**:
+- Pull-to-refresh gesture on dashboard
+- Manual ticket issuance (invalidates bookings and report providers)
+- Auto-refresh timer (periodic updates)
+- Screen load (initial refresh)
 
 ---
 
@@ -747,11 +909,42 @@ class MainActivity: FlutterActivity() {
 
 **Reading Process**:
 1. Start NFC session with polling options (ISO14443, ISO15693, ISO18092)
-2. Wait for tag discovery (30-second timeout)
+2. Wait for tag discovery (30-second timeout using `Completer` pattern)
 3. Try reading NDEF records first
 4. Extract card ID from text records (look for "RC-" prefix)
 5. Fallback to tag identifier if NDEF fails
 6. Normalize card ID (trim whitespace, preserve case)
+7. Complete `Completer` with card ID or `null` on timeout
+
+**Card Registration Check**:
+
+The app includes a feature to check if an NFC card is registered without processing a tap-in/tap-out:
+
+```dart
+// In NFC Reader Screen
+Future<void> _checkCardRegistration() async {
+  // 1. Read NFC tag
+  final cardId = await nfcService.readNFCTag();
+  
+  // 2. Check registration via API
+  final registeredCard = await apiService.checkCardRegistration(cardId);
+  
+  // 3. Show user info if registered, or "not registered" dialog
+  if (registeredCard != null) {
+    _showCardInfoBottomSheet(registeredCard); // Shows passenger name, balance, status, etc.
+  } else {
+    _showCardNotRegisteredDialog(cardId);
+  }
+}
+```
+
+**API Endpoints for Card Check**:
+- `/cards/{cardId}`
+- `/registered-cards/{cardId}`
+- `/nfc-cards/{cardId}`
+- `/passenger-cards/{cardId}`
+
+The API tries multiple endpoints and falls back to lowercase card ID if original case fails.
 
 ---
 
@@ -853,6 +1046,8 @@ https://ziouzevpbnigvwcacpqw.supabase.co/functions/v1
 | POST | `/nfc-tap-in` | NFC tap-in | Yes |
 | POST | `/nfc-tap-out` | NFC tap-out | Yes |
 | POST | `/manual-ticket` | Issue manual ticket | Yes |
+| GET | `/cards/{cardId}` or `/registered-cards/{cardId}` | Check card registration | Yes |
+| GET | `/supervisor-bookings?bus_id={id}&date={date}` | Get bus bookings | Yes |
 | POST | `/nfc-sync` | Sync offline events | Yes |
 | GET | `/supervisor-reports?date=YYYY-MM-DD` | Daily reports | Yes |
 
@@ -937,6 +1132,7 @@ CREATE TABLE manual_tickets (
   latitude REAL NOT NULL,
   longitude REAL NOT NULL,
   notes TEXT,
+  seat_number INTEGER,           -- Selected seat (1-40, optional)
   timestamp INTEGER NOT NULL,
   synced INTEGER DEFAULT 0,
   response_data TEXT
@@ -1007,6 +1203,29 @@ class NFCCircularButton extends StatelessWidget {
   final bool isScanning;
   
   // Large circular NFC scan button
+}
+```
+
+#### ProfileScreen
+
+```dart
+class ProfileScreen extends ConsumerWidget {
+  // Displays user profile information
+  // - User avatar with initials
+  // - Name, email, role, user ID
+  // - Accessible from Settings screen
+}
+```
+
+#### HelpSupportScreen
+
+```dart
+class HelpSupportScreen extends StatelessWidget {
+  // Comprehensive help and support section
+  // - FAQ with expandable questions/answers
+  // - Contact Developer button (opens Linktree URL)
+  // - App version information
+  // - Accessible from Settings screen
 }
 ```
 
@@ -1197,6 +1416,206 @@ print('💾 Synced status: ${event.synced}');
 
 ---
 
+## Manual Ticket Feature
+
+### Seat Selection
+
+The manual ticket screen includes a seat selection feature:
+
+- **Total Seats**: Always 40 (matches webapp)
+- **Available Seats**: Calculated from bookings (excludes booked seats)
+- **Visual Indicators**:
+  - Available seats: Dark background, clickable
+  - Selected seat: Green background with white text
+  - Booked seats: Grayed out, not clickable
+- **Optional**: Seat selection is optional (can issue ticket without seat)
+
+**Seat Selection Code**:
+
+```dart
+Widget _buildSeatSelection(List<int> availableSeats, int totalSeats) {
+  return Wrap(
+    children: List.generate(totalSeats, (index) {
+      final seatNum = index + 1;
+      final isAvailable = availableSeats.contains(seatNum);
+      final isSelected = _selectedSeat == seatNum;
+      
+      return GestureDetector(
+        onTap: isAvailable ? () => setState(() {
+          _selectedSeat = isSelected ? null : seatNum;
+        }) : null,
+        child: Container(
+          // Visual styling based on availability and selection
+        ),
+      );
+    }),
+  );
+}
+```
+
+### Manual Ticket Data Flow
+
+```
+┌─────────────────┐
+│ User Fills Form │
+│ (Passengers,    │
+│  Fare, Seat)    │
+└──────┬──────────┘
+       │
+       ▼
+┌─────────────────┐
+│ Get GPS         │
+│ Location        │
+└──────┬──────────┘
+       │
+       ▼
+┌─────────────────┐
+│ Try API Call    │
+│ (Online)        │
+└──────┬──────────┘
+       │
+   ┌───┴───┐
+   │       │
+   ▼       ▼
+┌─────┐ ┌──────────┐
+│Success│ │  Error   │
+└───┬──┘ └────┬─────┘
+    │         │
+    │         ▼
+    │    ┌──────────┐
+    │    │ Save to  │
+    │    │ LocalDB  │
+    │    │ (Offline)│
+    │    └────┬─────┘
+    │         │
+    └─────────┘
+         │
+         ▼
+    ┌──────────┐
+    │ Show     │
+    │ Success  │
+    └──────────┘
+```
+
+---
+
+## Profile & Help Support
+
+### Profile Screen
+
+The Profile screen displays user information and details:
+
+**Features**:
+- User avatar with initials (generated from name or email)
+- User name and email display
+- Role information (Supervisor, Admin, etc.)
+- User ID display
+- Accessible from Settings screen via navigation
+
+**Navigation**:
+```dart
+// In Settings screen
+ListTile(
+  leading: Icon(Icons.person),
+  title: Text('Profile'),
+  onTap: () => Navigator.pushNamed(context, '/profile'),
+)
+```
+
+**Implementation**:
+- Uses `authProvider` to get current user data
+- Displays user information in a card-based layout
+- Handles null/empty values gracefully
+
+### Help & Support Screen
+
+The Help & Support screen provides comprehensive assistance:
+
+**Features**:
+- **FAQ Section**: Expandable questions and answers covering:
+  - How to start a trip
+  - Why bookings not showing
+  - How to issue a manual ticket
+  - NFC card reading issues
+- **Contact Section**:
+  - Contact Support (placeholder for future implementation)
+  - Contact Developer button (opens Linktree URL: https://linktr.ee/abrarlajim)
+- **App Information**: Displays app version
+
+**URL Launcher Integration**:
+```dart
+import 'package:url_launcher/url_launcher.dart';
+
+Future<void> _contactDeveloper() async {
+  final url = Uri.parse('https://linktr.ee/abrarlajim');
+  if (await canLaunchUrl(url)) {
+    await launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+}
+```
+
+**Navigation**:
+```dart
+// In Settings screen
+ListTile(
+  leading: Icon(Icons.help_outline),
+  title: Text('Help & Support'),
+  onTap: () => Navigator.pushNamed(context, '/help-support'),
+)
+```
+
+**Route Configuration**:
+```dart
+// In main.dart
+MaterialApp(
+  routes: {
+    '/profile': (context) => const ProfileScreen(),
+    '/help-support': (context) => const HelpSupportScreen(),
+  },
+)
+```
+
+---
+
+## Reports Screen
+
+### Features
+
+- **Date Selection**: Pick any date to view reports
+- **Force Refresh**: Refresh button and pull-to-refresh with cache-busting
+- **Statistics Display**:
+  - CO₂ Saved
+  - Total Distance
+  - Total Fare
+  - Trip Count
+  - Passenger Count
+- **Hourly Activity**: Placeholder for future chart implementation
+
+### Refresh Mechanism
+
+The reports screen includes multiple refresh mechanisms:
+
+1. **Manual Refresh**: Tap refresh icon in app bar
+2. **Pull-to-Refresh**: Swipe down on the screen
+3. **Date Change**: Automatically refreshes when date is changed
+4. **Cache-Busting**: Adds timestamp parameter (`_t`) to prevent HTTP caching
+5. **HTTP Headers**: Sets `Cache-Control: no-cache` headers
+
+**Refresh Implementation**:
+
+```dart
+Future<ReportResponse> _fetchReport(DateTime date) async {
+  // Force refresh with cache-busting
+  final report = await apiService.getReport(
+    date: date, 
+    forceRefresh: true, // Adds _t timestamp parameter
+  );
+  return report;
+}
+```
+
+---
+
 ## Testing
 
 ### Test Credentials
@@ -1215,11 +1634,14 @@ print('💾 Synced status: ${event.synced}');
 ### Test Flow
 
 1. **Login**: Use test credentials
-2. **Dashboard**: Verify bus assignment and map rendering
+2. **Dashboard**: Verify bus assignment, map rendering, and real-time stats
 3. **NFC Scan**: Use test cards or "Simulate Tap-In" button
-4. **Manual Ticket**: Fill form and issue ticket
-5. **Offline Mode**: Turn off internet, create events, then sync
-6. **Reports**: View daily reports with statistics
+4. **Card Check**: Use "Check Card Registration" button to verify card info
+5. **Manual Ticket**: Fill form, select seat (optional), and issue ticket
+6. **Bookings**: View seat map and verify booked seats
+7. **Offline Mode**: Turn off internet, create events, then sync
+8. **Reports**: View daily reports with statistics, test refresh functionality
+9. **Trip Progress**: Verify progress updates based on bus location
 
 ---
 
@@ -1233,16 +1655,73 @@ print('💾 Synced status: ${event.synced}');
 
 ---
 
+## Recent Updates
+
+### Version Updates
+
+#### Card Registration Check (Latest)
+- Added "Check Card Registration" button in NFC reader screen
+- Displays passenger information if card is registered
+- Shows "Card not registered" dialog if not found
+- Supports multiple API endpoints with fallback
+
+#### Seat Selection in Manual Tickets (Latest)
+- Added seat selection grid (1-40 seats)
+- Visual indicators for available/booked/selected seats
+- Seat number included in manual ticket API request
+- Database schema updated to store seat number
+
+#### Enhanced Dashboard Statistics (Latest)
+- Passenger count now includes bookings and manual tickets
+- Real-time trip progress calculated from bus location
+- Removed hardcoded progress values
+- Accurate passenger counting across all sources
+
+#### Reports Refresh (Latest)
+- Added force refresh mechanism with cache-busting
+- HTTP cache-control headers to prevent stale data
+- Refresh button in app bar
+- Pull-to-refresh support
+
+#### Bus Capacity Fix (Latest)
+- Fixed to always use 40 seats (matches webapp)
+- Overrides backend capacity value if different
+- Consistent across bookings, manual tickets, and seat selection
+
+#### Real-Time Dashboard Passenger Count (Latest)
+- **Prioritizes `bookedSeats` from API** (most reliable source)
+- **Real-time updates** via `ref.watch()` on bookings provider
+- **Synchronous calculation** from bookings (no FutureBuilder delay)
+- **Automatic refresh** every 10 seconds when bus is assigned
+- Falls back to counting bookings array, then report data
+- Adds manual ticket passengers to total
+- Enhanced logging for debugging passenger count calculation
+
+#### Profile & Help & Support Screens (Latest)
+- **Profile Screen**: Displays user information (name, email, role, user ID)
+  - Shows user avatar with initials
+  - Accessible from Settings screen
+- **Help & Support Screen**: Comprehensive help section
+  - FAQ section with expandable questions/answers
+  - Contact Developer button (opens Linktree URL: https://linktr.ee/abrarlajim)
+  - App version information
+  - Accessible from Settings screen
+- **URL Launcher Integration**: Uses `url_launcher` package to open external links
+
+---
+
 ## Future Enhancements
 
 - [ ] Push notifications for sync status
-- [ ] Real-time bus location tracking
+- [ ] Real-time bus location tracking (enhanced)
 - [ ] QR code ticket scanning
 - [ ] Multi-language support
 - [ ] Dark/Light theme toggle
 - [ ] Export reports to PDF
 - [ ] Biometric authentication
 - [ ] Offline map caching
+- [ ] Hourly activity charts in reports
+- [ ] Seat map visualization in dashboard
 
 ---
 

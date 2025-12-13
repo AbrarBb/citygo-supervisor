@@ -6,6 +6,8 @@ import '../theme/app_theme.dart';
 import '../widgets/components.dart';
 import '../providers/nfc_provider.dart';
 import '../models/nfc.dart';
+import '../models/card.dart';
+import '../services/api_service.dart';
 import '../constants.dart';
 
 /// NFC Reader Screen - Large circular NFC button with status
@@ -28,7 +30,6 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
   String _statusText = 'Tap to Scan';
   String? _detectedNFCId;
   bool _isProcessing = false;
-  NfcTapResponse? _lastResponse;
 
   @override
   void initState() {
@@ -95,7 +96,6 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
         if (mounted) {
           HapticFeedback.mediumImpact();
           setState(() {
-            _lastResponse = response;
             _statusText = widget.isTapIn ? 'Tap-In Successful' : 'Tap-Out Successful';
             _isScanning = false;
             _isProcessing = false;
@@ -106,17 +106,36 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
 
       nfcService.onError = (error) {
         if (mounted) {
+          // Extract the actual error message (remove "Saved offline: " prefix if present)
+          String displayError = error;
+          String statusText = 'Error';
+          
+          if (error.contains('Saved offline')) {
+            statusText = 'Saved offline';
+            // Extract the actual error after "Saved offline: "
+            final parts = error.split('Saved offline: ');
+            if (parts.length > 1) {
+              displayError = parts[1];
+            }
+          } else if (error.contains('No NFC')) {
+            statusText = 'No card detected';
+          } else {
+            statusText = 'Error';
+          }
+          
           setState(() {
             _isScanning = false;
             _isProcessing = false;
-            _statusText = error.contains('offline') ? 'Saved offline' : 'Error: $error';
+            _statusText = statusText;
           });
+          
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(error),
+              content: Text(displayError),
               backgroundColor: error.contains('offline') 
                   ? AppTheme.warningColor 
                   : AppTheme.errorColor,
+              duration: const Duration(seconds: 4),
             ),
           );
         }
@@ -147,6 +166,255 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
   }
 
   /// Simulate NFC tap for testing (without NFC hardware)
+  /// Check if card is registered and show user info
+  Future<void> _checkCardRegistration() async {
+    if (_isScanning || _isProcessing) return;
+
+    setState(() {
+      _isScanning = true;
+      _statusText = 'Reading card...';
+      _detectedNFCId = null;
+    });
+
+    try {
+      final nfcService = ref.read(nfcServiceProvider);
+      
+      // Read NFC tag
+      print('🔍 Starting NFC card read for registration check...');
+      final cardId = await nfcService.readNFCTag();
+      
+      if (cardId == null || cardId.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _isScanning = false;
+            _statusText = 'No card detected';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No NFC card detected. Please ensure the card is properly formatted with an NDEF text record containing "RC-XXXXXXXX".'),
+              backgroundColor: AppTheme.errorColor,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
+      print('✅ Card ID read: "$cardId"');
+      setState(() {
+        _detectedNFCId = cardId;
+        _statusText = 'Checking registration...';
+      });
+
+      // Check card registration
+      print('🔍 Checking card registration for: "$cardId"');
+      final apiService = ApiService();
+      RegisteredCard? registeredCard;
+      try {
+        registeredCard = await apiService.checkCardRegistration(cardId);
+        print('🔍 Card registration check result: ${registeredCard != null ? "Found" : "Not found"}');
+      } catch (e) {
+        print('❌ Error checking card registration: $e');
+        if (mounted) {
+          setState(() {
+            _isScanning = false;
+            _statusText = 'Error checking card';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error checking card registration: ${e.toString()}'),
+              backgroundColor: AppTheme.errorColor,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+
+        if (registeredCard != null) {
+          // Ensure card ID is set (use scanned cardId if API didn't return it)
+          final cardToShow = RegisteredCard(
+            cardId: registeredCard.cardId.isNotEmpty ? registeredCard.cardId : cardId,
+            passengerName: registeredCard.passengerName,
+            balance: registeredCard.balance,
+            status: registeredCard.status,
+            registeredAt: registeredCard.registeredAt,
+            lastUsed: registeredCard.lastUsed,
+          );
+          
+          // Card is registered - show user info
+          _showCardInfoBottomSheet(cardToShow);
+          setState(() {
+            _statusText = 'Card registered';
+          });
+        } else {
+          // Card is not registered
+          _showCardNotRegisteredDialog(cardId);
+          setState(() {
+            _statusText = 'Card not registered';
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+          _statusText = 'Error: ${e.toString()}';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error checking card: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showCardInfoBottomSheet(RegisteredCard card) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusLG)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(AppTheme.spacingLG),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Card Information',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: AppTheme.textSecondary),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.spacingMD),
+            CityGoCard(
+              margin: EdgeInsets.zero,
+              padding: const EdgeInsets.all(AppTheme.spacingMD),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildInfoRow('Card ID', card.cardId),
+                  if (card.passengerName != null) ...[
+                    const SizedBox(height: AppTheme.spacingSM),
+                    _buildInfoRow('Passenger Name', card.passengerName!),
+                  ],
+                  if (card.balance != null) ...[
+                    const SizedBox(height: AppTheme.spacingSM),
+                    _buildInfoRow('Balance', '৳${card.balance!.toStringAsFixed(2)}'),
+                  ],
+                  if (card.status != null) ...[
+                    const SizedBox(height: AppTheme.spacingSM),
+                    _buildInfoRow('Status', card.status!),
+                  ],
+                  if (card.registeredAt != null) ...[
+                    const SizedBox(height: AppTheme.spacingSM),
+                    _buildInfoRow(
+                      'Registered',
+                      '${card.registeredAt!.day}/${card.registeredAt!.month}/${card.registeredAt!.year}',
+                    ),
+                  ],
+                  if (card.lastUsed != null) ...[
+                    const SizedBox(height: AppTheme.spacingSM),
+                    _buildInfoRow(
+                      'Last Used',
+                      '${card.lastUsed!.day}/${card.lastUsed!.month}/${card.lastUsed!.year}',
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppTheme.spacingMD),
+            PrimaryButton(
+              text: 'Done',
+              onPressed: () => Navigator.pop(context),
+              width: double.infinity,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCardNotRegisteredDialog(String cardId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.cardBackground,
+        title: const Text(
+          'Card Not Registered',
+          style: TextStyle(color: AppTheme.textPrimary),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This card is not registered in the system.',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: AppTheme.spacingMD),
+            Text(
+              'Card ID: $cardId',
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK', style: TextStyle(color: AppTheme.primaryGreen)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 14,
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _simulateNFCTap() async {
     if (_isScanning || _isProcessing) return;
 
@@ -188,7 +456,6 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
 
         HapticFeedback.mediumImpact();
         setState(() {
-          _lastResponse = response;
           _statusText = widget.isTapIn ? 'Tap-In Successful' : 'Tap-Out Successful';
           _isProcessing = false;
         });
@@ -378,6 +645,14 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
               ),
             ],
             const SizedBox(height: AppTheme.spacingXL),
+            // Check Card Button
+            PrimaryButton(
+              text: 'Check Card Registration',
+              icon: Icons.credit_card,
+              onPressed: _checkCardRegistration,
+              width: 280,
+            ),
+            const SizedBox(height: AppTheme.spacingMD),
             // Simulate Button (for testing)
             SecondaryButton(
               text: 'Simulate Tap-In',

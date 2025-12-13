@@ -16,10 +16,46 @@ class ReportsScreen extends ConsumerStatefulWidget {
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   DateTime _selectedDate = DateTime.now();
+  Future<ReportResponse>? _reportFuture;
+  int _refreshKey = 0; // Used to force rebuild of FutureBuilder
 
-  Future<ReportResponse> _loadReports(DateTime date) async {
-    final apiService = ApiService();
-    return await apiService.getReport(date: date);
+  @override
+  void initState() {
+    super.initState();
+    _loadReports(_selectedDate, forceRefresh: true);
+  }
+
+  Future<void> _loadReports(DateTime date, {bool forceRefresh = false}) async {
+    if (forceRefresh) {
+      // Force a new future by incrementing refresh key
+      setState(() {
+        _refreshKey++;
+        _reportFuture = _fetchReport(date);
+      });
+    } else {
+      setState(() {
+        _reportFuture = _fetchReport(date);
+      });
+    }
+  }
+
+  Future<ReportResponse> _fetchReport(DateTime date) async {
+    try {
+      final apiService = ApiService();
+      final dateStr = date.toString().split(' ')[0];
+      print('📊 Reports Screen: Loading report for $dateStr (refresh key: $_refreshKey)');
+      
+      // Force refresh to get latest data
+      final report = await apiService.getReport(date: date, forceRefresh: true);
+      
+      print('📊 Reports Screen: Report loaded successfully');
+      print('📊 Report data: trips=${report.tripCount}, passengers=${report.passengerCount}, fare=${report.totalFare}');
+      return report;
+    } catch (e, stackTrace) {
+      print('❌ Reports Screen Error: $e');
+      print('❌ Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   @override
@@ -34,7 +70,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ),
       ),
       body: FutureBuilder<ReportResponse>(
-        future: _loadReports(_selectedDate),
+        key: ValueKey('report_${_selectedDate.toString().split(' ')[0]}_$_refreshKey'),
+        future: _reportFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -42,16 +79,50 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           
           if (snapshot.hasError) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('Error: ${snapshot.error}'),
-                  const SizedBox(height: AppTheme.spacingMD),
-                  ElevatedButton(
-                    onPressed: () => setState(() {}),
-                    child: const Text('Retry'),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.all(AppTheme.spacingLG),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: AppTheme.errorColor,
+                    ),
+                    const SizedBox(height: AppTheme.spacingMD),
+                    Text(
+                      'Error loading report',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.spacingSM),
+                    Text(
+                      '${snapshot.error}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.spacingLG),
+                    PrimaryButton(
+                      text: 'Retry',
+                      onPressed: () => _loadReports(_selectedDate, forceRefresh: true),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          
+          if (!snapshot.hasData) {
+            return Center(
+              child: Text(
+                'No report data available',
+                style: TextStyle(color: AppTheme.textSecondary),
               ),
             );
           }
@@ -60,7 +131,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           
           return RefreshIndicator(
             onRefresh: () async {
-              setState(() {});
+              await _loadReports(_selectedDate, forceRefresh: true);
             },
             child: SingleChildScrollView(
               child: Column(
@@ -70,7 +141,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   Padding(
                     padding: const EdgeInsets.all(AppTheme.spacingMD),
                     child: CityGoCard(
-                      child: InkWell(
+                        child: InkWell(
                         onTap: () async {
                           final date = await showDatePicker(
                             context: context,
@@ -79,7 +150,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                             lastDate: DateTime.now(),
                           );
                           if (date != null) {
-                            setState(() => _selectedDate = date);
+                            setState(() {
+                              _selectedDate = date;
+                            });
+                            _loadReports(date, forceRefresh: true);
                           }
                         },
                         child: Padding(

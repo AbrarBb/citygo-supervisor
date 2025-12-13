@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,8 +12,12 @@ import '../widgets/components.dart';
 import '../providers/bus_provider.dart';
 import '../providers/sync_provider.dart';
 import '../providers/report_provider.dart';
+import '../providers/bookings_provider.dart';
 import '../models/report.dart';
 import '../models/bus.dart';
+import '../models/booking.dart';
+import '../services/local_db.dart';
+import '../models/ticket.dart';
 import 'nfc_reader.dart';
 import 'manual_ticket.dart';
 import 'bookings.dart';
@@ -158,14 +163,54 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   void _startBusLocationRefresh() {
-    // Refresh bus location every 10 seconds to get live updates
-    _busLocationRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    // Refresh bus assignment and location more frequently when no bus is assigned
+    // This ensures that if a bus becomes active, it will show up quickly
+    _busLocationRefreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (mounted) {
-        // Refresh bus provider to get latest location
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          ref.invalidate(busProvider);
-        });
+        final busAsync = ref.read(busProvider);
+        final hasBus = busAsync.valueOrNull != null;
+        
+        // If no bus assigned, refresh every 5 seconds
+        // If bus is assigned, refresh every 10 seconds (more frequent for real-time data)
+        if (!hasBus) {
+          print('🔄 Auto-refreshing bus provider (no bus assigned, every 5 seconds)...');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.invalidate(busProvider);
+          });
+        } else {
+          // Refresh every 10 seconds if bus is assigned (every 2 ticks)
+          if (timer.tick % 2 == 0) {
+            print('🔄 Auto-refreshing bus provider (bus assigned, every 10 seconds)...');
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ref.invalidate(busProvider);
+              // Also refresh bookings and report if we have a bus
+              busAsync.whenData((busInfo) {
+                if (busInfo != null) {
+                  print('🔄 Auto-refreshing bookings for bus ${busInfo.id} (REAL-TIME)...');
+                  ref.invalidate(busBookingsProvider(busInfo.id));
+                  print('🔄 Auto-refreshing today\'s report...');
+                  ref.invalidate(todayReportProvider);
+                }
+              });
+            });
+          }
+        }
       }
+    });
+    
+    // Also refresh immediately when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      print('🔄 Initial refresh on screen load...');
+      ref.invalidate(busProvider);
+      ref.invalidate(todayReportProvider);
+      // Also refresh bookings if we have a bus
+      final busAsync = ref.read(busProvider);
+      busAsync.whenData((busInfo) {
+        if (busInfo != null) {
+          print('🔄 Initial refresh of bookings for bus ${busInfo.id}...');
+          ref.invalidate(busBookingsProvider(busInfo.id));
+        }
+      });
     });
   }
 
@@ -262,7 +307,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           busId: busId,
         ),
       ),
-    );
+    ).then((result) {
+      // Refresh bookings and report when returning from manual ticket screen
+      // This ensures that any new bookings from manual tickets are shown and stats are updated
+      if (result != null) {
+        print('🔄 Refreshing bookings and report after manual ticket...');
+        ref.invalidate(busBookingsProvider(busId));
+        ref.invalidate(todayReportProvider);
+      }
+    });
   }
 
   @override
@@ -380,8 +433,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           }
           return RefreshIndicator(
             onRefresh: () async {
+              // Refresh all providers to get live data
               ref.invalidate(busProvider);
-              await ref.read(busProvider.future);
+              ref.invalidate(todayReportProvider);
+              ref.invalidate(busBookingsProvider(busInfo.id));
+              await Future.wait([
+                ref.read(busProvider.future),
+                ref.read(todayReportProvider.future),
+              ]);
             },
             child: SingleChildScrollView(
               child: Column(
@@ -391,10 +450,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   _buildBusCard(busInfo),
 
                   // Stats Row
-                  _buildStatsRow(todayReport),
+                  _buildStatsRow(todayReport, busInfo),
 
                   // Trip Progress Card
-                  _buildTripProgressCard(),
+                  _buildTripProgressCard(busInfo),
 
                   // Map Container
                   _buildMapContainer(busInfo),
@@ -414,18 +473,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         Row(
                           children: [
                             Expanded(
-                              child: SecondaryButton(
+                              child: _CompactButton(
                                 text: 'View Bookings',
                                 icon: Icons.event_seat,
+                                isPrimary: false,
                                 onPressed: () => _openBookings(busInfo.id),
                               ),
                             ),
-                            const SizedBox(width: AppTheme.spacingMD),
+                            const SizedBox(width: AppTheme.spacingXS),
                             Expanded(
-                              child: SecondaryButton(
+                              child: _CompactButton(
                                 text: 'Manual Ticket',
                                 icon: Icons.receipt,
+                                isPrimary: false,
                                 onPressed: () => _openManualTicket(busInfo.id),
+                              ),
+                            ),
+                            const SizedBox(width: AppTheme.spacingXS),
+                            Expanded(
+                              child: _CompactButton(
+                                text: 'Scan NFC',
+                                icon: Icons.nfc,
+                                isPrimary: true,
+                                onPressed: () => _openNFCReader(busInfo.id, busInfo.isActive),
                               ),
                             ),
                           ],
@@ -439,82 +509,192 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(AppTheme.spacingMD),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 64,
-                  color: AppTheme.errorColor,
-                ),
-                const SizedBox(height: AppTheme.spacingMD),
-                Text(
-                  'Unable to Load Bus Information',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: AppTheme.spacingSM),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingMD),
-                  child: Text(
-                    error.toString().replaceFirst('Exception: ', ''),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.textSecondary,
-                    ),
-                    overflow: TextOverflow.visible,
-                    maxLines: 5,
-                  ),
-                ),
-                const SizedBox(height: AppTheme.spacingLG),
-                PrimaryButton(
-                  text: 'Retry',
-                  icon: Icons.refresh,
-                  onPressed: () {
+        error: (error, stack) {
+          // Try to load cached bus info as fallback
+          return FutureBuilder<BusInfo?>(
+            future: LocalDB().getCachedBusInfo(),
+            builder: (context, cacheSnapshot) {
+              // If we have cached data, show it instead of error
+              if (cacheSnapshot.hasData && cacheSnapshot.data != null) {
+                print('✅ Using cached bus info from error state');
+                final cachedBus = cacheSnapshot.data!;
+                // Invalidate provider to trigger refresh in background
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  ref.invalidate(busProvider);
+                });
+                // Show the cached bus data
+                return RefreshIndicator(
+                  onRefresh: () async {
+                    // Refresh all providers to get live data
                     ref.invalidate(busProvider);
                     ref.invalidate(todayReportProvider);
+                    ref.invalidate(busBookingsProvider(cachedBus.id));
+                    await Future.wait([
+                      ref.read(busProvider.future),
+                      ref.read(todayReportProvider.future),
+                    ]);
                   },
-                  width: 200,
-                ),
-                const SizedBox(height: AppTheme.spacingMD),
-                TextButton(
-                  onPressed: () {
-                    // Show message about waiting for assignment
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: const Text(
-                          'If you are not assigned to a bus, please wait for a driver to assign you.',
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Bus Card
+                        _buildBusCard(cachedBus),
+                        // Stats Row
+                        _buildStatsRow(todayReport, cachedBus),
+                        // Trip Progress Card
+                        _buildTripProgressCard(cachedBus),
+                        // Map Container
+                        _buildMapContainer(cachedBus),
+                        // Action Buttons
+                        Padding(
+                          padding: const EdgeInsets.all(AppTheme.spacingMD),
+                          child: Column(
+                            children: [
+                              PrimaryButton(
+                                text: cachedBus.isActive ? 'Trip Active' : 'Trip Inactive',
+                                icon: cachedBus.isActive ? Icons.check_circle : Icons.pause_circle,
+                                onPressed: _toggleTrip,
+                                width: double.infinity,
+                              ),
+                              const SizedBox(height: AppTheme.spacingMD),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _CompactButton(
+                                      text: 'View Bookings',
+                                      icon: Icons.event_seat,
+                                      isPrimary: false,
+                                      onPressed: () => _openBookings(cachedBus.id),
+                                    ),
+                                  ),
+                                  const SizedBox(width: AppTheme.spacingXS),
+                                  Expanded(
+                                    child: _CompactButton(
+                                      text: 'Manual Ticket',
+                                      icon: Icons.receipt,
+                                      isPrimary: false,
+                                      onPressed: () => _openManualTicket(cachedBus.id),
+                                    ),
+                                  ),
+                                  const SizedBox(width: AppTheme.spacingXS),
+                                  Expanded(
+                                    child: _CompactButton(
+                                      text: 'Scan NFC',
+                                      icon: Icons.nfc,
+                                      isPrimary: true,
+                                      onPressed: () => _openNFCReader(cachedBus.id, cachedBus.isActive),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                        duration: const Duration(seconds: 4),
-                        backgroundColor: AppTheme.primaryGreen,
+                        // Show a banner indicating we're using cached data
+                        Container(
+                          margin: const EdgeInsets.all(AppTheme.spacingMD),
+                          padding: const EdgeInsets.all(AppTheme.spacingSM),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warningColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppTheme.warningColor),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, color: AppTheme.warningColor, size: 20),
+                              const SizedBox(width: AppTheme.spacingSM),
+                              Expanded(
+                                child: Text(
+                                  'Showing cached data. Refreshing in background...',
+                                  style: TextStyle(
+                                    color: AppTheme.warningColor,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              
+              // No cached data, show error
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppTheme.spacingMD),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: AppTheme.errorColor,
                       ),
-                    );
-                  },
-                  child: Text(
-                    'Need Help?',
-                    style: TextStyle(color: AppTheme.primaryGreen),
+                      const SizedBox(height: AppTheme.spacingMD),
+                      Text(
+                        'Unable to Load Bus Information',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: AppTheme.spacingSM),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingMD),
+                        child: Text(
+                          error.toString().replaceFirst('Exception: ', ''),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: AppTheme.textSecondary,
+                          ),
+                          overflow: TextOverflow.visible,
+                          maxLines: 5,
+                        ),
+                      ),
+                      const SizedBox(height: AppTheme.spacingLG),
+                      PrimaryButton(
+                        text: 'Retry',
+                        icon: Icons.refresh,
+                        onPressed: () {
+                          ref.invalidate(busProvider);
+                          ref.invalidate(todayReportProvider);
+                        },
+                        width: 200,
+                      ),
+                      const SizedBox(height: AppTheme.spacingMD),
+                      TextButton(
+                        onPressed: () {
+                          // Show message about waiting for assignment
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text(
+                                'If you are not assigned to a bus, please wait for a driver to assign you.',
+                              ),
+                              duration: const Duration(seconds: 4),
+                              backgroundColor: AppTheme.primaryGreen,
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'Need Help?',
+                          style: TextStyle(color: AppTheme.primaryGreen),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
+              );
+            },
+          );
+        },
       ),
-      floatingActionButton: busAsync.when(
-        data: (busInfo) => FloatingNFCAction(
-          onPressed: busInfo != null ? () => _openNFCReader(busInfo.id, busInfo.isActive) : null,
-          isScanning: false,
-        ),
-        loading: () => null,
-        error: (_, __) => null,
-      ),
+      // FloatingActionButton removed - NFC scan is now in the action buttons row
     );
     } catch (e, stackTrace) {
       print('❌ Error in dashboard build: $e');
@@ -642,48 +822,190 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  Widget _buildStatsRow(AsyncValue<ReportResponse?> reportAsync) {
+  Widget _buildStatsRow(AsyncValue<ReportResponse?> reportAsync, BusInfo? busInfo) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingMD),
       child: reportAsync.when(
         data: (report) {
-          final tripCount = report?.tripCount ?? 0;
-          final passengerCount = report?.passengerCount ?? 0;
-          final revenue = report?.totalFare ?? 0.0;
+          print('📊 Dashboard Report Data: tripCount=${report?.tripCount}, passengerCount=${report?.passengerCount}, totalFare=${report?.totalFare}');
           
-          // Format revenue with taka sign
-          final revenueFormatted = NumberFormat('#,##0').format(revenue);
+          // Calculate trip count - use report if available, otherwise calculate from bookings
+          int tripCount = report?.tripCount ?? 0;
+          if (tripCount == 0 && busInfo != null) {
+            // If report shows 0 trips but bus is active, show at least 1 trip
+            if (busInfo.isActive) {
+              tripCount = 1;
+              print('📊 Trip count was 0 but bus is active, showing 1 trip');
+            }
+          }
           
-          return Row(
-            children: [
-              Expanded(
-                child: StatCard(
-                  label: 'Today\'s Trips',
-                  value: tripCount.toString(),
-                  icon: Icons.route,
-                  iconColor: AppTheme.primaryBlue,
-                ),
+          // Calculate revenue - use report if available, otherwise calculate from manual tickets
+          double revenue = report?.totalFare ?? 0.0;
+          
+          // Start with report passenger count
+          int passengerCount = report?.passengerCount ?? 0;
+          
+          // WATCH bookings provider for real-time updates
+          if (busInfo != null) {
+            final bookingsAsync = ref.watch(busBookingsProvider(busInfo.id));
+            
+            return bookingsAsync.when(
+              data: (bookings) {
+                // Calculate stats synchronously from bookings (already loaded)
+                // Then add manual tickets asynchronously
+                int calculatedPassengers = _calculatePassengersFromBookings(bookings, passengerCount);
+                double calculatedRevenue = revenue;
+                
+                // Use FutureBuilder only for manual tickets (async operation)
+                // Use bookings data as key to force rebuild when bookings change
+                return FutureBuilder<Map<String, int>>(
+                  key: ValueKey('${bookings?.bookedSeats ?? 0}-${bookings?.bookings.length ?? 0}'),
+                  future: _getManualTicketStats(busInfo.id),
+                  builder: (context, snapshot) {
+                    final manualStats = snapshot.data ?? {'passengers': 0, 'revenue': 0};
+                    final manualPassengers = manualStats['passengers'] ?? 0;
+                    final manualRevenue = (manualStats['revenue'] ?? 0).toDouble();
+                    
+                    // Add manual ticket passengers
+                    calculatedPassengers += manualPassengers;
+                    
+                    // Add manual revenue
+                    if (calculatedRevenue == 0.0 && manualRevenue > 0.0) {
+                      calculatedRevenue = manualRevenue;
+                    } else if (manualRevenue > 0.0) {
+                      calculatedRevenue += manualRevenue;
+                    }
+                    
+                    final revenueFormatted = NumberFormat('#,##0').format(calculatedRevenue);
+                    
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: StatCard(
+                            label: 'Today\'s Trips',
+                            value: tripCount.toString(),
+                            icon: Icons.route,
+                            iconColor: AppTheme.primaryBlue,
+                          ),
+                        ),
+                        const SizedBox(width: AppTheme.spacingMD),
+                        Expanded(
+                          child: StatCard(
+                            label: 'Passengers',
+                            value: calculatedPassengers.toString(),
+                            icon: Icons.people,
+                            iconColor: AppTheme.primaryGreen,
+                          ),
+                        ),
+                        const SizedBox(width: AppTheme.spacingMD),
+                        Expanded(
+                          child: StatCard(
+                            label: 'Revenue',
+                            value: '৳$revenueFormatted',
+                            icon: Icons.attach_money,
+                            iconColor: AppTheme.accentCyanReal,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+              loading: () => Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      label: 'Today\'s Trips',
+                      value: tripCount.toString(),
+                      icon: Icons.route,
+                      iconColor: AppTheme.primaryBlue,
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.spacingMD),
+                  Expanded(
+                    child: StatCard(
+                      label: 'Passengers',
+                      value: '...',
+                      icon: Icons.people,
+                      iconColor: AppTheme.primaryGreen,
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.spacingMD),
+                  Expanded(
+                    child: StatCard(
+                      label: 'Revenue',
+                      value: '৳${NumberFormat('#,##0').format(revenue)}',
+                      icon: Icons.attach_money,
+                      iconColor: AppTheme.accentCyanReal,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: AppTheme.spacingMD),
-              Expanded(
-                child: StatCard(
-                  label: 'Passengers',
-                  value: passengerCount.toString(),
-                  icon: Icons.people,
-                  iconColor: AppTheme.primaryGreen,
-                ),
+              error: (error, stack) => Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      label: 'Today\'s Trips',
+                      value: tripCount.toString(),
+                      icon: Icons.route,
+                      iconColor: AppTheme.primaryBlue,
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.spacingMD),
+                  Expanded(
+                    child: StatCard(
+                      label: 'Passengers',
+                      value: passengerCount.toString(),
+                      icon: Icons.people,
+                      iconColor: AppTheme.primaryGreen,
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.spacingMD),
+                  Expanded(
+                    child: StatCard(
+                      label: 'Revenue',
+                      value: '৳${NumberFormat('#,##0').format(revenue)}',
+                      icon: Icons.attach_money,
+                      iconColor: AppTheme.accentCyanReal,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: AppTheme.spacingMD),
-              Expanded(
-                child: StatCard(
-                  label: 'Revenue',
-                  value: '৳$revenueFormatted',
-                  icon: Icons.attach_money,
-                  iconColor: AppTheme.accentCyanReal,
+            );
+          } else {
+            // No bus info, use report data only
+            final revenueFormatted = NumberFormat('#,##0').format(revenue);
+            return Row(
+              children: [
+                Expanded(
+                  child: StatCard(
+                    label: 'Today\'s Trips',
+                    value: tripCount.toString(),
+                    icon: Icons.route,
+                    iconColor: AppTheme.primaryBlue,
+                  ),
                 ),
-              ),
-            ],
-          );
+                const SizedBox(width: AppTheme.spacingMD),
+                Expanded(
+                  child: StatCard(
+                    label: 'Passengers',
+                    value: passengerCount.toString(),
+                    icon: Icons.people,
+                    iconColor: AppTheme.primaryGreen,
+                  ),
+                ),
+                const SizedBox(width: AppTheme.spacingMD),
+                Expanded(
+                  child: StatCard(
+                    label: 'Revenue',
+                    value: '৳$revenueFormatted',
+                    icon: Icons.attach_money,
+                    iconColor: AppTheme.accentCyanReal,
+                  ),
+                ),
+              ],
+            );
+          }
         },
         loading: () => Row(
           children: [
@@ -728,7 +1050,53 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  Widget _buildTripProgressCard() {
+  Widget _buildTripProgressCard(BusInfo? busInfo) {
+    final stops = busInfo?.route?.stops ?? [];
+    final totalStops = stops.length;
+    
+    // Calculate current stop based on bus location
+    int currentStopIndex = 0;
+    double progress = 0.0;
+    
+    if (busInfo?.currentLocation != null && stops.isNotEmpty) {
+      final busLat = busInfo!.currentLocation!['lat'];
+      final busLng = busInfo.currentLocation!['lng'];
+      
+      if (busLat != null && busLng != null) {
+        // Find the closest stop to current bus location
+        double minDistance = double.infinity;
+        for (int i = 0; i < stops.length; i++) {
+          final stop = stops[i];
+          final distance = _calculateDistance(
+            busLat,
+            busLng,
+            stop.latitude,
+            stop.longitude,
+          );
+          if (distance < minDistance) {
+            minDistance = distance;
+            currentStopIndex = i;
+          }
+        }
+        
+        // Calculate progress based on stop index
+        if (totalStops > 0) {
+          progress = (currentStopIndex + 1) / totalStops;
+          // Clamp between 0 and 1
+          progress = progress.clamp(0.0, 1.0);
+        }
+      }
+    }
+    
+    // If no location or stops, show 0%
+    if (totalStops == 0 || busInfo?.currentLocation == null) {
+      progress = 0.0;
+      currentStopIndex = 0;
+    }
+    
+    final progressPercent = (progress * 100).toInt();
+    final currentStop = currentStopIndex + 1;
+    
     return CityGoCard(
       margin: const EdgeInsets.all(AppTheme.spacingMD),
       child: Column(
@@ -744,7 +1112,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
           const SizedBox(height: AppTheme.spacingMD),
           LinearProgressIndicator(
-            value: 0.65,
+            value: progress,
             backgroundColor: AppTheme.surfaceDark,
             valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryGreen),
             borderRadius: BorderRadius.circular(AppTheme.radiusSM),
@@ -754,14 +1122,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '65% Complete',
+                '$progressPercent% Complete',
                 style: const TextStyle(
                   fontSize: 12,
                   color: AppTheme.textSecondary,
                 ),
               ),
               Text(
-                '13 / 20 Stops',
+                totalStops > 0 
+                    ? '$currentStop / $totalStops Stops'
+                    : 'No stops',
                 style: const TextStyle(
                   fontSize: 12,
                   color: AppTheme.textSecondary,
@@ -772,6 +1142,154 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ],
       ),
     );
+  }
+  
+  /// Calculate distance between two coordinates in kilometers
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371; // Earth radius in kilometers
+    
+    final dLat = _degreesToRadians(lat2 - lat1);
+    final dLon = _degreesToRadians(lon2 - lon1);
+    
+    final a = (dLat / 2) * (dLat / 2) +
+        _degreesToRadians(lat1) * _degreesToRadians(lat2) *
+        (dLon / 2) * (dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    
+    return earthRadius * c;
+  }
+  
+  double _degreesToRadians(double degrees) {
+    return degrees * (3.141592653589793 / 180);
+  }
+  
+  /// Calculate passengers from bookings synchronously (bookings are already loaded)
+  int _calculatePassengersFromBookings(BusBookings? bookings, int reportPassengerCount) {
+    print('📊 ========== CALCULATING PASSENGERS FROM BOOKINGS ==========');
+    print('📊 Bookings object: ${bookings != null ? "exists" : "null"}');
+    
+    if (bookings == null) {
+      print('📊 No bookings data, using report count: $reportPassengerCount');
+      return reportPassengerCount;
+    }
+    
+    print('📊 Bookings array length: ${bookings.bookings.length}');
+    print('📊 Booked seats from API: ${bookings.bookedSeats}');
+    
+    // Log all booking statuses for debugging
+    for (var booking in bookings.bookings) {
+      print('📊   - Seat ${booking.seatNumber}: status="${booking.status}", passenger="${booking.passengerName}"');
+    }
+    
+    // PRIORITY: Use bookedSeats from API first (most reliable)
+    final bookedSeatsCount = bookings.bookedSeats;
+    if (bookedSeatsCount > 0) {
+      print('📊 Using bookedSeats from API: $bookedSeatsCount (most reliable)');
+      print('📊 ====================================================');
+      return bookedSeatsCount;
+    }
+    
+    // Fallback: Count from bookings array if bookedSeats is 0
+    if (bookings.bookings.isNotEmpty) {
+      // Count actual bookings (confirmed/booked status)
+      final confirmedBookings = bookings.bookings.where((b) {
+        final status = b.status.toLowerCase();
+        final isConfirmed = status == 'confirmed' || status == 'booked';
+        if (!isConfirmed) {
+          print('📊   ⚠️ Filtered out booking: Seat ${b.seatNumber}, status="$status"');
+        }
+        return isConfirmed;
+      }).length;
+      
+      print('📊 REAL-TIME Bookings: ${bookings.bookings.length} total, $confirmedBookings confirmed/booked');
+      print('📊 Using confirmed bookings count: $confirmedBookings (report had: $reportPassengerCount)');
+      print('📊 ====================================================');
+      
+      // Use confirmed bookings count
+      return confirmedBookings > 0 ? confirmedBookings : reportPassengerCount;
+    } else {
+      // Bookings object exists but array is empty - use bookedSeats if available
+      final bookedSeatsCount = bookings.bookedSeats;
+      print('📊 Bookings array is empty, but bookedSeats=$bookedSeatsCount');
+      if (bookedSeatsCount > 0) {
+        print('📊 Using bookedSeats from API: $bookedSeatsCount');
+        print('📊 ====================================================');
+        return bookedSeatsCount;
+      } else {
+        print('📊 Bookings object exists but empty, using report count: $reportPassengerCount');
+        print('📊 ====================================================');
+        return reportPassengerCount;
+      }
+    }
+  }
+  
+  /// Get manual ticket stats (passengers and revenue) asynchronously
+  Future<Map<String, int>> _getManualTicketStats(String busId) async {
+    try {
+      final manualTickets = await _getTodayManualTickets(busId);
+      final manualPassengers = manualTickets.fold<int>(
+        0,
+        (sum, ticket) => sum + ticket.passengerCount,
+      );
+      final manualRevenue = manualTickets.fold<double>(
+        0.0,
+        (sum, ticket) => sum + ticket.fare,
+      ).toInt();
+      
+      print('📊 Manual tickets: $manualPassengers passengers, ৳$manualRevenue');
+      
+      return {
+        'passengers': manualPassengers,
+        'revenue': manualRevenue,
+      };
+    } catch (e) {
+      print('⚠️ Error getting manual ticket stats: $e');
+      return {'passengers': 0, 'revenue': 0};
+    }
+  }
+  
+  /// Get today's manual tickets for a bus
+  Future<List<ManualTicket>> _getTodayManualTickets(String? busId) async {
+    if (busId == null) return [];
+    
+    try {
+      final localDB = LocalDB();
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final todayEnd = todayStart.add(const Duration(days: 1));
+      
+      // Get all manual tickets (synced and unsynced) for today
+      final db = await localDB.database;
+      final results = await db.query(
+        'manual_tickets',
+        where: 'bus_id = ? AND timestamp >= ? AND timestamp < ?',
+        whereArgs: [
+          busId,
+          todayStart.millisecondsSinceEpoch,
+          todayEnd.millisecondsSinceEpoch,
+        ],
+      );
+      
+      final todayTickets = results.map((row) {
+        return ManualTicket(
+          offlineId: row['offline_id'] as String?,
+          busId: row['bus_id'] as String,
+          passengerCount: row['passenger_count'] as int,
+          fare: row['fare'] as double,
+          latitude: row['latitude'] as double,
+          longitude: row['longitude'] as double,
+          notes: row['notes'] as String?,
+          seatNumber: row['seat_number'] as int?,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(row['timestamp'] as int),
+        );
+      }).toList();
+      
+      print('📊 Found ${todayTickets.length} manual tickets for today');
+      return todayTickets;
+    } catch (e) {
+      print('⚠️ Error getting today\'s manual tickets: $e');
+      return [];
+    }
   }
 
   Widget _buildMapContainer(busInfo) {
@@ -895,10 +1413,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: SizedBox(
         width: double.infinity,
         height: 300,
-        child: Builder(
-          builder: (context) {
-            try {
-              return GoogleMap(
+        child: Stack(
+          children: [
+            Builder(
+              builder: (context) {
+                try {
+                  return GoogleMap(
                 initialCameraPosition: CameraPosition(
                   target: LatLng(centerLat, centerLng),
                   zoom: zoomLevel,
@@ -1047,48 +1567,134 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         ),
                       }
                     : <Polyline>{},
-              );
-            } catch (e, stackTrace) {
-              print('❌ Google Maps error: $e');
-              print('Stack trace: $stackTrace');
-              // Fallback: Show a placeholder with error message
-              return Container(
-                color: AppTheme.surfaceDark,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.map_outlined,
-                        size: 48,
-                        color: AppTheme.textSecondary,
+                  );
+                } catch (e, stackTrace) {
+                  print('❌ Google Maps error: $e');
+                  print('Stack trace: $stackTrace');
+                  // Fallback: Show a placeholder with error message
+                  return Container(
+                    color: AppTheme.surfaceDark,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.map_outlined,
+                            size: 48,
+                            color: AppTheme.textSecondary,
+                          ),
+                          const SizedBox(height: AppTheme.spacingMD),
+                          Text(
+                            'Map unavailable',
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: AppTheme.spacingXS),
+                          Text(
+                            'Error: ${e.toString()}',
+                            style: TextStyle(
+                              color: AppTheme.textTertiary,
+                              fontSize: 12,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: AppTheme.spacingMD),
-                      Text(
-                        'Map unavailable',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 16,
+                    ),
+                  );
+                }
+              },
+            ),
+            // Zoom Controls
+            Positioned(
+              right: 16,
+              top: 16,
+              child: Column(
+                children: [
+                  // Zoom In Button
+                  Material(
+                    color: AppTheme.cardBackground,
+                    borderRadius: BorderRadius.circular(8),
+                    elevation: 4,
+                    child: InkWell(
+                      onTap: () => _zoomIn(),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppTheme.borderColor,
+                            width: 1,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.add,
+                          color: AppTheme.textPrimary,
+                          size: 24,
                         ),
                       ),
-                      const SizedBox(height: AppTheme.spacingXS),
-                      Text(
-                        'Error: ${e.toString()}',
-                        style: TextStyle(
-                          color: AppTheme.textTertiary,
-                          fontSize: 12,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              );
-            }
-          },
+                  const SizedBox(height: 8),
+                  // Zoom Out Button
+                  Material(
+                    color: AppTheme.cardBackground,
+                    borderRadius: BorderRadius.circular(8),
+                    elevation: 4,
+                    child: InkWell(
+                      onTap: () => _zoomOut(),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppTheme.borderColor,
+                            width: 1,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.remove,
+                          color: AppTheme.textPrimary,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// Zoom in on the map
+  Future<void> _zoomIn() async {
+    if (_mapController != null) {
+      try {
+        await _mapController!.animateCamera(CameraUpdate.zoomIn());
+      } catch (e) {
+        print('❌ Error zooming in: $e');
+      }
+    }
+  }
+
+  /// Zoom out on the map
+  Future<void> _zoomOut() async {
+    if (_mapController != null) {
+      try {
+        await _mapController!.animateCamera(CameraUpdate.zoomOut());
+      } catch (e) {
+        print('❌ Error zooming out: $e');
+      }
+    }
   }
 
   LatLngBounds _boundsFromLatLngList(List<LatLng> list) {
@@ -1107,6 +1713,100 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return LatLngBounds(
       southwest: LatLng(minLat!, minLng!),
       northeast: LatLng(maxLat!, maxLng!),
+    );
+  }
+}
+
+/// Compact button widget for action buttons row to prevent overflow
+class _CompactButton extends StatelessWidget {
+  final String text;
+  final IconData icon;
+  final bool isPrimary;
+  final VoidCallback? onPressed;
+
+  const _CompactButton({
+    required this.text,
+    required this.icon,
+    required this.isPrimary,
+    this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonStyle = isPrimary
+        ? ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryGreen,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacingSM,
+              vertical: AppTheme.spacingMD,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+            ),
+          )
+        : OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.textPrimary,
+            side: const BorderSide(color: AppTheme.borderColorLight),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppTheme.spacingSM,
+              vertical: AppTheme.spacingMD,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+            ),
+          );
+
+    final button = isPrimary
+        ? ElevatedButton(
+            onPressed: onPressed,
+            style: buttonStyle,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          )
+        : OutlinedButton(
+            onPressed: onPressed,
+            style: buttonStyle,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          );
+
+    return SizedBox(
+      width: double.infinity,
+      child: button,
     );
   }
 }

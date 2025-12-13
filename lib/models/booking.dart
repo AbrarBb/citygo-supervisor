@@ -10,6 +10,9 @@ class SeatBooking {
   final DateTime? bookedAt;
   final DateTime? tripDate;
   final String? bookingType; // 'online', 'nfc', 'manual'
+  final String? tripId; // Trip/journey ID
+  final String? routeId; // Route ID
+  final String? dropStop; // Drop-off stop name
 
   SeatBooking({
     required this.id,
@@ -22,15 +25,23 @@ class SeatBooking {
     this.bookedAt,
     this.tripDate,
     this.bookingType,
+    this.tripId,
+    this.routeId,
+    this.dropStop,
   });
 
   factory SeatBooking.fromJson(Map<String, dynamic> json) {
-    // Normalize status: 'confirmed' -> 'booked'
+    // Backend only uses 'confirmed' status (valid constraint values: confirmed, cancelled, completed)
+    // Normalize 'confirmed' -> 'booked' for UI display consistency
     String status = json['status'] as String? ?? 
                     json['booking_status'] as String? ?? 
                     'available';
     if (status == 'confirmed') {
-      status = 'booked';
+      status = 'booked'; // Normalize to 'booked' for UI display
+    }
+    // Explicitly exclude completed bookings
+    if (status.toLowerCase() == 'completed') {
+      status = 'completed'; // Keep as is, will be filtered out later
     }
     
     // Try multiple field names for seat number
@@ -98,6 +109,15 @@ class SeatBooking {
       bookingType: json['booking_type'] as String? ?? 
                    json['type'] as String? ?? 
                    (json['payment_method'] == 'rapid_card' ? 'rapid_card' : 'online'),
+      tripId: json['trip_id'] as String? ?? 
+              json['tripId'] as String? ??
+              json['journey_id'] as String?,
+      routeId: json['route_id'] as String? ?? 
+               json['routeId'] as String?,
+      dropStop: json['drop_stop'] as String? ?? 
+                json['dropStop'] as String? ??
+                json['drop_stop_id'] as String? ??  // Backend returns drop_stop_id in booking response
+                json['drop_off_stop'] as String?,
     );
   }
 
@@ -113,6 +133,9 @@ class SeatBooking {
       if (bookedAt != null) 'booked_at': bookedAt!.toIso8601String(),
       if (tripDate != null) 'trip_date': tripDate!.toIso8601String(),
       if (bookingType != null) 'booking_type': bookingType,
+      if (tripId != null) 'trip_id': tripId,
+      if (routeId != null) 'route_id': routeId,
+      if (dropStop != null) 'drop_stop': dropStop,
     };
   }
 }
@@ -144,18 +167,23 @@ class BusBookings {
         .map((e) => SeatBooking.fromJson(e as Map<String, dynamic>))
         .toList();
 
-    final totalSeats = json['total_seats'] as int? ?? 
+    // Always use 40 seats to match webapp, regardless of what backend returns
+    final totalSeats = 40;
+    // Allow backend value for logging but override to 40
+    final backendTotalSeats = json['total_seats'] as int? ?? 
                       json['capacity'] as int? ?? 
-                      json['total_capacity'] as int? ?? 
-                      40;
+                      json['total_capacity'] as int?;
+    if (backendTotalSeats != null && backendTotalSeats != 40) {
+      print('⚠️ Backend returned total_seats=$backendTotalSeats, overriding to 40 to match webapp');
+    }
     
-    // Calculate booked seats - include 'confirmed', 'booked', and 'occupied' statuses
+    // Calculate booked seats - backend only uses 'confirmed' status
+    // App normalizes 'confirmed' to 'booked' for display, so check both
     final bookedSeats = json['booked_seats'] as int? ?? 
                        bookingsList.where((b) {
                          final status = b.status.toLowerCase();
-                         return status == 'booked' || 
-                                status == 'occupied' || 
-                                status == 'confirmed';
+                         // Backend only uses 'confirmed', but check both in case normalization already happened
+                         return status == 'confirmed' || status == 'booked';
                        }).length;
     
     print('📊 BusBookings.fromJson: total_seats=$totalSeats, booked_seats=$bookedSeats, bookings_count=${bookingsList.length}');

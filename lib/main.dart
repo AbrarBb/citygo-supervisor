@@ -12,6 +12,8 @@ import 'screens/sync_center.dart';
 import 'screens/reports.dart';
 import 'screens/settings.dart';
 import 'screens/registered_cards.dart';
+import 'screens/profile.dart';
+import 'screens/help_support.dart';
 
 void main() {
   // Initialize database factory only for web/desktop platforms
@@ -52,6 +54,8 @@ class CityGoApp extends StatelessWidget {
         '/reports': (context) => const ReportsScreen(),
         '/settings': (context) => const SettingsScreen(),
         '/registered-cards': (context) => const RegisteredCardsScreen(),
+        '/profile': (context) => const ProfileScreen(),
+        '/help-support': (context) => const HelpSupportScreen(),
       },
      
       onGenerateRoute: (settings) {

@@ -8,7 +8,7 @@ import '../models/bus.dart';
 /// Local SQLite Database for offline storage
 class LocalDB {
   static const String _databaseName = 'citygo_supervisor.db';
-  static const int _databaseVersion = 2;
+  static const int _databaseVersion = 4;
 
   static Database? _database;
 
@@ -69,6 +69,8 @@ class LocalDB {
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
         notes TEXT,
+        seat_number INTEGER,
+        drop_stop_id TEXT,
         timestamp INTEGER NOT NULL,
         synced INTEGER DEFAULT 0,
         response_data TEXT
@@ -107,6 +109,22 @@ class LocalDB {
       try {
         await db.execute('ALTER TABLE nfc_logs ADD COLUMN offline_id TEXT UNIQUE');
         await db.execute('ALTER TABLE manual_tickets ADD COLUMN offline_id TEXT UNIQUE');
+      } catch (e) {
+        // Column might already exist
+      }
+    }
+    if (oldVersion < 3) {
+      // Add seat_number column if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE manual_tickets ADD COLUMN seat_number INTEGER');
+      } catch (e) {
+        // Column might already exist
+      }
+    }
+    if (oldVersion < 4) {
+      // Add drop_stop_id column if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE manual_tickets ADD COLUMN drop_stop_id TEXT');
       } catch (e) {
         // Column might already exist
       }
@@ -151,6 +169,8 @@ class LocalDB {
         'latitude': ticket.latitude,
         'longitude': ticket.longitude,
         'notes': ticket.notes,
+        'seat_number': ticket.seatNumber,
+        'drop_stop_id': ticket.dropStopId,
         'timestamp': ticket.timestamp.millisecondsSinceEpoch,
         'synced': 0,
       },
@@ -343,6 +363,7 @@ class LocalDB {
       latitude: row['latitude'] as double,
       longitude: row['longitude'] as double,
       notes: row['notes'] as String?,
+      seatNumber: row['seat_number'] as int?,
       timestamp: DateTime.fromMillisecondsSinceEpoch(row['timestamp'] as int),
     );
   }

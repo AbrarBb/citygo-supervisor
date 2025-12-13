@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:dio/dio.dart';
 import '../models/nfc.dart';
 import '../services/api_service.dart';
 import '../services/local_db.dart';
@@ -83,25 +85,68 @@ class NFCService {
                           try {
                             final payload = recordDynamic.payload as List<int>?;
                             if (payload != null && payload.isNotEmpty) {
-                              // Skip first byte (language code length)
-                              final textBytes = payload.skip(1).toList();
-                              final text = String.fromCharCodes(textBytes);
+                              // First byte is status byte (language code length + encoding)
+                              // Bit 7 = 0 means UTF-8 encoding
+                              // Bits 6-0 = language code length
+                              final statusByte = payload[0];
+                              final langCodeLength = statusByte & 0x3F; // Lower 6 bits
                               
-                              // Check if text contains RC- format (card ID)
-                              // Preserve original case - backend might be case-sensitive
-                              if (text.startsWith('RC-') || text.startsWith('rc-')) {
-                                // Only trim whitespace, preserve case
-                                nfcId = text.trim();
-                                print('✅ Found card ID in NDEF text record: "$nfcId" (preserving case)');
-                                break;
-                              } else if (text.contains('RC-') || text.contains('rc-')) {
-                                // Extract RC-XXXXX from text (case-insensitive match, but preserve original case)
-                                final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]+').firstMatch(text);
-                                if (match != null) {
-                                  // Preserve original case from NFC tag
-                                  nfcId = match.group(0)!.trim();
-                                  print('✅ Extracted card ID from NDEF text: "$nfcId" (preserving case)');
-                                  break;
+                              // Skip status byte and language code
+                              final textStartIndex = 1 + langCodeLength;
+                              if (textStartIndex < payload.length) {
+                                final textBytes = payload.sublist(textStartIndex);
+                                
+                                // Try UTF-8 decoding
+                                String text;
+                                try {
+                                  text = utf8.decode(textBytes);
+                                } catch (e) {
+                                  // Fallback to Latin-1 if UTF-8 fails
+                                  text = String.fromCharCodes(textBytes);
+                                }
+                                
+                                print('📱 NDEF text record content: "$text" (length: ${text.length})');
+                                
+                                // Check if text contains RC- format (card ID)
+                                // Preserve original case - backend might be case-sensitive
+                                final trimmedText = text.trim();
+                                print('📱 Processing NDEF text: "$trimmedText" (length: ${trimmedText.length})');
+                                
+                                // Try multiple patterns to extract card ID
+                                // Pattern 1: Starts with RC- or rc-
+                                if (trimmedText.startsWith('RC-') || trimmedText.startsWith('rc-')) {
+                                  // Extract the full RC-XXXXXXXX format
+                                  final match = RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]{8}').firstMatch(trimmedText);
+                                  if (match != null) {
+                                    nfcId = match.group(0)!; // Preserve original case
+                                    print('✅ Found card ID (starts with RC-): "$nfcId"');
+                                    break;
+                                  }
+                                  // If no match, use the whole text if it looks like RC-XXXXXXXX
+                                  if (RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]+').hasMatch(trimmedText)) {
+                                    nfcId = trimmedText;
+                                    print('✅ Using whole text as card ID: "$nfcId"');
+                                    break;
+                                  }
+                                }
+                                
+                                // Pattern 2: Contains RC- anywhere in text
+                                if (nfcId == null && (trimmedText.contains('RC-') || trimmedText.contains('rc-'))) {
+                                  final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]{8}').firstMatch(trimmedText);
+                                  if (match != null) {
+                                    nfcId = match.group(0)!; // Preserve original case
+                                    print('✅ Extracted card ID (contains RC-): "$nfcId"');
+                                    break;
+                                  }
+                                }
+                                
+                                // Pattern 3: Whole text matches RC-XXXXXXXX format
+                                if (nfcId == null) {
+                                  if (RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]{8}$').hasMatch(trimmedText)) {
+                                    nfcId = trimmedText;
+                                    print('✅ Whole text matches card ID format: "$nfcId"');
+                                    break;
+                                  }
                                 }
                               }
                             }
@@ -131,21 +176,60 @@ class NFCService {
                         if (recordType != null && recordType.isNotEmpty && recordType[0] == 0x54) {
                           final payload = recordDynamic.payload as List<int>?;
                           if (payload != null && payload.isNotEmpty) {
-                            final textBytes = payload.skip(1).toList();
-                            final text = String.fromCharCodes(textBytes);
-                            if (text.startsWith('RC-') || text.startsWith('rc-')) {
-                              // Only trim whitespace, preserve case
-                              nfcId = text.trim();
-                              print('✅ Found card ID in NDEF: "$nfcId" (preserving case)');
-                              break;
-                            } else if (text.contains('RC-') || text.contains('rc-')) {
-                              // Extract RC-XXXXX from text (case-insensitive match, but preserve original case)
-                              final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]+').firstMatch(text);
-                              if (match != null) {
-                                // Preserve original case from NFC tag
-                                nfcId = match.group(0)!.trim();
-                                print('✅ Extracted card ID from NDEF: "$nfcId" (preserving case)');
-                                break;
+                            // First byte is status byte (language code length + encoding)
+                            final statusByte = payload[0];
+                            final langCodeLength = statusByte & 0x3F; // Lower 6 bits
+                            
+                            // Skip status byte and language code
+                            final textStartIndex = 1 + langCodeLength;
+                            if (textStartIndex < payload.length) {
+                              final textBytes = payload.sublist(textStartIndex);
+                              
+                              // Try UTF-8 decoding
+                              String text;
+                              try {
+                                text = utf8.decode(textBytes);
+                              } catch (e) {
+                                // Fallback to Latin-1 if UTF-8 fails
+                                text = String.fromCharCodes(textBytes);
+                              }
+                              
+                              print('📱 NDEF text record content (fallback method): "$text"');
+                              
+                              // Use same robust extraction logic as primary method
+                              final trimmedText = text.trim();
+                              print('📱 Processing NDEF text (fallback): "$trimmedText" (length: ${trimmedText.length})');
+                              
+                              // Try multiple patterns to extract card ID
+                              if (trimmedText.startsWith('RC-') || trimmedText.startsWith('rc-')) {
+                                final match = RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]{8}').firstMatch(trimmedText);
+                                if (match != null) {
+                                  nfcId = match.group(0)!;
+                                  print('✅ Found card ID (fallback, starts with RC-): "$nfcId"');
+                                  break;
+                                }
+                                if (RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]+').hasMatch(trimmedText)) {
+                                  nfcId = trimmedText;
+                                  print('✅ Using whole text as card ID (fallback): "$nfcId"');
+                                  break;
+                                }
+                              }
+                              
+                              if (nfcId == null && (trimmedText.contains('RC-') || trimmedText.contains('rc-'))) {
+                                final match = RegExp(r'[Rr][Cc]-[A-Fa-f0-9]{8}').firstMatch(trimmedText);
+                                if (match != null) {
+                                  nfcId = match.group(0)!;
+                                  print('✅ Extracted card ID (fallback, contains RC-): "$nfcId"');
+                                  break;
+                                }
+                              }
+                              
+                              if (nfcId == null) {
+                                if (RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]{8}$').hasMatch(trimmedText)) {
+                                  nfcId = trimmedText;
+                                  print('✅ Whole text matches card ID format (fallback): "$nfcId"');
+                                  break;
+                                }
                               }
                             }
                           }
@@ -162,9 +246,11 @@ class NFCService {
               // NDEF not available, will fall back to tag identifier
             }
             
-            // If NDEF didn't work, try reading tag identifier as fallback
+            // If NDEF didn't work, DO NOT fall back to tag identifier
+            // Tag identifier creates random RC-XXXXX that doesn't match registered cards
+            // Only use tag identifier if absolutely no NDEF data exists
             if (nfcId == null) {
-              print('📱 Trying to read tag identifier as fallback...');
+              print('⚠️ No NDEF data found. Checking if tag has any readable data...');
               
               // Try multiple ways to access tag data
               Map<String, dynamic>? tagData;
@@ -272,22 +358,33 @@ class NFCService {
               }
             }
 
-            // If still no ID found, generate fallback
+            // If still no ID found, return null instead of generating random ID
+            // Random IDs don't match registered cards and cause confusion
             if (nfcId == null) {
-              final hash = tag.hashCode.toRadixString(16).toLowerCase();
-              nfcId = 'RC-$hash';
-              print('⚠️ No card ID found, using fallback: $nfcId');
+              print('❌ No card ID found in NDEF records. Tag may not be formatted correctly.');
+              print('❌ Expected NDEF text record with format: "RC-XXXXXXXX"');
+              print('❌ Please ensure the NFC tag has an NDEF text record containing the card ID');
+              // Don't generate fallback - return null so user knows card wasn't read
+              if (!completer.isCompleted) {
+                completer.complete(null);
+              }
+              return;
             }
 
             // Only trim whitespace, preserve original case from NFC tag
             // Backend might be case-sensitive and expect exact format from NFC tag
-            // At this point, nfcId is guaranteed to be non-null
             final originalId = nfcId;
             final trimmedId = nfcId!.trim();
             nfcId = trimmedId;
             print('📱 Final card ID (trimmed, preserving case): "$trimmedId" (original: "$originalId")');
             print('📱 Card ID length: ${trimmedId.length} characters');
             print('📱 Card ID bytes: ${trimmedId.codeUnits}');
+            
+            // Validate card ID format
+            if (!RegExp(r'^[Rr][Cc]-[A-Fa-f0-9]{8}$').hasMatch(trimmedId)) {
+              print('⚠️ Warning: Card ID format may be incorrect: "$trimmedId"');
+              print('⚠️ Expected format: RC-XXXXXXXX (8 hex characters)');
+            }
             
             // Complete the future with the card ID
             if (!completer.isCompleted) {
@@ -362,9 +459,12 @@ class NFCService {
       final cardId = await readNFCTag();
       
       if (cardId == null || cardId.isEmpty) {
-        onError?.call('No NFC tag detected');
+        print('❌ NFC tag read returned null or empty');
+        onError?.call('No NFC card detected. Please ensure the card is properly formatted with an NDEF text record containing "RC-XXXXXXXX".');
         return null;
       }
+      
+      print('✅ NFC tag read successfully: "$cardId"');
 
       // Create event
       final event = NfcEvent(
@@ -389,12 +489,85 @@ class NFCService {
 
         onSuccess?.call(response);
         return event;
+      } on DioException catch (e) {
+        // Check DioException type to determine if it's a network error
+        final isNetworkError = e.type == DioExceptionType.connectionTimeout ||
+                              e.type == DioExceptionType.receiveTimeout ||
+                              e.type == DioExceptionType.connectionError ||
+                              e.type == DioExceptionType.sendTimeout;
+        
+        // Check error message for validation errors
+        String errorMessage = e.toString();
+        String errorLower = errorMessage.toLowerCase();
+        final responseMessage = e.response?.data?['message']?.toString().toLowerCase() ?? 
+                              e.response?.data?['error']?.toString().toLowerCase() ?? '';
+        
+        // Check for validation errors (card not registered, etc.)
+        final isValidationError = errorLower.contains('card not registered') || 
+                                 errorLower.contains('card not found') ||
+                                 errorLower.contains('not registered') ||
+                                 errorLower.contains('please register') ||
+                                 responseMessage.contains('not registered') ||
+                                 responseMessage.contains('card not found') ||
+                                 (e.response?.statusCode == 404 && 
+                                  (errorLower.contains('card') || responseMessage.contains('card')));
+        
+        print('🔍 Error analysis:');
+        print('   DioException type: ${e.type}');
+        print('   Status code: ${e.response?.statusCode}');
+        print('   Error message: $errorMessage');
+        print('   Response message: $responseMessage');
+        print('   Is validation error: $isValidationError');
+        print('   Is network error: $isNetworkError');
+        
+        // Only save to offline storage if it's a network error
+        // Validation errors should be shown immediately without saving
+        if (isNetworkError) {
+          // Save to offline storage for network errors
+          print('💾 Saving to offline storage (network error)');
+          onProgress?.call('Saving offline...');
+          await _localDB.saveNFCLog(event);
+          onError?.call('Saved offline: No connection. Will sync when online.');
+          return event;
+        } else if (isValidationError) {
+          // Show validation error immediately without saving offline
+          print('❌ Validation error - not saving offline');
+          onError?.call('Card not registered. Please register your card first.');
+          return null; // Don't return event for validation errors
+        } else {
+          // Other errors - show error but don't save offline
+          print('❌ Other error - not saving offline');
+          final finalMessage = e.response?.data?['message']?.toString() ?? 
+                              e.response?.data?['error']?.toString() ?? 
+                              errorMessage;
+          onError?.call(finalMessage);
+          return null;
+        }
       } catch (e) {
-        // Save to offline storage
-        onProgress?.call('Saving offline...');
-        await _localDB.saveNFCLog(event);
-        onError?.call('Saved offline: ${e.toString()}');
-        return event;
+        // Handle non-DioException errors
+        String errorMessage = e.toString();
+        String errorLower = errorMessage.toLowerCase();
+        
+        // Check for network-related errors
+        final isNetworkError = errorLower.contains('socketexception') ||
+                              errorLower.contains('failed host lookup') ||
+                              errorLower.contains('connection refused') ||
+                              errorLower.contains('connection timed out') ||
+                              errorLower.contains('network is unreachable') ||
+                              errorLower.contains('no internet') ||
+                              errorLower.contains('timeout');
+        
+        if (isNetworkError) {
+          print('💾 Saving to offline storage (network error)');
+          onProgress?.call('Saving offline...');
+          await _localDB.saveNFCLog(event);
+          onError?.call('Saved offline: No connection. Will sync when online.');
+          return event;
+        } else {
+          print('❌ Other error - not saving offline');
+          onError?.call(errorMessage);
+          return null;
+        }
       }
     } catch (e) {
       onError?.call('Error: ${e.toString()}');

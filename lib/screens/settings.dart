@@ -93,7 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
                   onTap: () {
-                    // Navigate to profile
+                    Navigator.pushNamed(context, '/profile');
                   },
                 ),
                 const Divider(height: 1),
@@ -210,7 +210,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
                   onTap: () {
-                    // Navigate to help
+                    Navigator.pushNamed(context, '/help-support');
                   },
                 ),
               ],

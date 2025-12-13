@@ -7,6 +7,8 @@ class ManualTicket {
   final double latitude;
   final double longitude;
   final String? notes;
+  final int? seatNumber;
+  final String? dropStopId; // Drop-off stop ID
   final DateTime timestamp;
 
   ManualTicket({
@@ -17,6 +19,8 @@ class ManualTicket {
     required this.latitude,
     required this.longitude,
     this.notes,
+    this.seatNumber,
+    this.dropStopId,
     required this.timestamp,
   });
 
@@ -29,6 +33,8 @@ class ManualTicket {
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
       notes: json['notes'] as String?,
+      seatNumber: json['seat_number'] as int?,
+      dropStopId: json['drop_stop_id'] as String? ?? json['dropStopId'] as String?,
       timestamp: DateTime.fromMillisecondsSinceEpoch(
         json['timestamp'] as int? ?? json['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
       ),
@@ -44,6 +50,8 @@ class ManualTicket {
       'latitude': latitude,
       'longitude': longitude,
       if (notes != null) 'notes': notes,
+      if (seatNumber != null) 'seat_number': seatNumber,
+      if (dropStopId != null) 'drop_stop_id': dropStopId,
       'timestamp': timestamp.millisecondsSinceEpoch,
     };
   }
@@ -55,12 +63,16 @@ class TicketResponse {
   final String ticketId;
   final String? qrCode;
   final String? message;
+  final String? status; // 'created' or 'duplicate'
+  final Map<String, dynamic>? booking; // Booking info if seat was booked
 
   TicketResponse({
     required this.success,
     required this.ticketId,
     this.qrCode,
     this.message,
+    this.status,
+    this.booking,
   });
 
   factory TicketResponse.fromJson(Map<String, dynamic> json) {
@@ -69,6 +81,8 @@ class TicketResponse {
       ticketId: json['ticket_id'] as String? ?? json['id'] as String,
       qrCode: json['qr_code'] as String?,
       message: json['message'] as String?,
+      status: json['status'] as String?,
+      booking: json['booking'] as Map<String, dynamic>?,
     );
   }
 
@@ -78,6 +92,8 @@ class TicketResponse {
       'ticket_id': ticketId,
       if (qrCode != null) 'qr_code': qrCode,
       if (message != null) 'message': message,
+      if (status != null) 'status': status,
+      if (booking != null) 'booking': booking,
     };
   }
 }

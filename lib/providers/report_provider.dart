@@ -35,9 +35,14 @@ final todayReportProvider = FutureProvider<ReportResponse?>((ref) async {
   }
   
   try {
-    final report = await apiService.getReport(date: DateTime.now()).timeout(
-      const Duration(seconds: 5),
+    // Always use forceRefresh to get live data
+    final report = await apiService.getReport(
+      date: DateTime.now(),
+      forceRefresh: true, // Force refresh to get live data
+    ).timeout(
+      const Duration(seconds: 10), // Increased timeout for better reliability
     );
+    print('📊 Report loaded: trips=${report.tripCount}, passengers=${report.passengerCount}, revenue=${report.totalFare}');
     return report;
   } catch (e) {
     print('Error loading today\'s report: $e');
