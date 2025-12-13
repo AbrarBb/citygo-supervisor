@@ -20,8 +20,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
 
   Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) return;
-
+    print('🔵 _login() called');
+    print('🔵 Email: ${_emailController.text}');
+    print('🔵 Password length: ${_passwordController.text.length}');
+    
+    if (!_formKey.currentState!.validate()) {
+      print('❌ Form validation failed');
+      return;
+    }
+    
+    print('✅ Form validation passed, calling login API');
     await ref.read(authProvider.notifier).login(
       _emailController.text.trim(),
       _passwordController.text,
@@ -293,51 +301,62 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           const SizedBox(height: AppTheme.spacingXL),
 
                           // Login Button with Gradient
-                          Container(
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              gradient: AppTheme.primaryGradient,
-                              borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                              boxShadow: AppTheme.glowShadow,
-                            ),
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: authState.isLoading ? null : _login,
+                          TextButton(
+                            onPressed: authState.isLoading ? null : () {
+                              print('🔵 Login button tapped');
+                              // Dismiss keyboard
+                              FocusScope.of(context).unfocus();
+                              _login();
+                            },
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(double.infinity, 50),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(AppTheme.radiusMD),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: AppTheme.spacingMD,
-                                    horizontal: AppTheme.spacingLG,
-                                  ),
-                                  child: authState.isLoading
-                                      ? const Center(
-                                          child: SizedBox(
-                                            height: 20,
-                                            width: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                            ),
-                                          ),
-                                        )
-                                      : const Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Icon(Icons.login, color: Colors.white, size: 20),
-                                            SizedBox(width: AppTheme.spacingSM),
-                                            Text(
-                                              'Login',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                ),
                               ),
+                            ),
+                            child: Container(
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                gradient: authState.isLoading 
+                                    ? LinearGradient(
+                                        colors: [Colors.grey[400]!, Colors.grey[500]!],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      )
+                                    : AppTheme.primaryGradient,
+                                borderRadius: BorderRadius.circular(AppTheme.radiusMD),
+                                boxShadow: AppTheme.glowShadow,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: AppTheme.spacingMD,
+                                horizontal: AppTheme.spacingLG,
+                              ),
+                              child: authState.isLoading
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                      ),
+                                    )
+                                  : const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.login, color: Colors.white, size: 20),
+                                        SizedBox(width: AppTheme.spacingSM),
+                                        Text(
+                                          'Login',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                             ),
                           ),
                         ],

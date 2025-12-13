@@ -10,6 +10,9 @@ import '../models/card.dart';
 import '../services/api_service.dart';
 import '../constants.dart';
 
+// Method channel for NFC intents from Android
+const MethodChannel _nfcChannel = MethodChannel('com.example.flutter_application_1/nfc');
+
 /// NFC Reader Screen - Large circular NFC button with status
 class NFCReaderScreen extends ConsumerStatefulWidget {
   final String busId;
@@ -27,18 +30,138 @@ class NFCReaderScreen extends ConsumerStatefulWidget {
 
 class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
   bool _isScanning = false;
-  String _statusText = 'Tap to Scan';
+  String _statusText = 'Ready to Scan';
   String? _detectedNFCId;
   bool _isProcessing = false;
+  bool _sessionActive = false;
 
   @override
   void initState() {
     super.initState();
     _checkNFCAvailability();
-    // Start NFC session when screen loads to intercept tags
+    // Set up method channel listener for NFC intents
+    _setupNfcIntentListener();
+    // Start NFC session immediately when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _prepareNFCSession();
+      _startNFCSession();
     });
+  }
+
+  /// Set up listener for NFC intents from Android
+  void _setupNfcIntentListener() {
+    _nfcChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onNfcIntent') {
+        print('📱 Received NFC intent from Android: ${call.arguments}');
+        // When Android sends NFC intent (user selected our app from dialog)
+        // Try to read the tag immediately
+        if (mounted && !_isProcessing) {
+          _handleNfcIntent(call.arguments);
+        }
+      }
+    });
+  }
+
+  /// Handle NFC intent received from Android
+  Future<void> _handleNfcIntent(Map<dynamic, dynamic>? arguments) async {
+    if (arguments == null) return;
+    
+    print('📱 Processing NFC intent: $arguments');
+    
+    // Check if Android already extracted the card ID from NDEF
+    final cardIdFromIntent = arguments['cardId'] as String?;
+    final hasNdef = arguments['hasNdef'] as bool? ?? false;
+    
+    if (cardIdFromIntent != null && cardIdFromIntent.isNotEmpty && hasNdef) {
+      // Android already read the NDEF data, use it directly
+      print('✅ Card ID extracted from intent NDEF: $cardIdFromIntent');
+      if (mounted) {
+        setState(() {
+          _isProcessing = true;
+          _statusText = 'Processing card...';
+        });
+        await _processDetectedCard(cardIdFromIntent);
+      }
+      return;
+    }
+    
+    // If NDEF wasn't available, try to read the tag via session
+    setState(() {
+      _isProcessing = true;
+      _statusText = 'Reading card from intent...';
+    });
+
+    try {
+      final nfcService = ref.read(nfcServiceProvider);
+      // Try to read the tag - the session should still be active
+      final cardId = await nfcService.readNFCTag();
+      
+      if (cardId != null && mounted) {
+        print('✅ Card ID read from session: $cardId');
+        // Process the card
+        await _processDetectedCard(cardId);
+      } else {
+        print('⚠️ Could not read card ID from intent or session');
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _statusText = 'Could not read card. Please tap again.';
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling NFC intent: $e');
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _statusText = 'Error reading card';
+        });
+      }
+    }
+  }
+
+  /// Process a detected card (check registration and show info)
+  Future<void> _processDetectedCard(String cardId) async {
+    final apiService = ApiService();
+    RegisteredCard? registeredCard;
+    
+    try {
+      print('🔍 Checking card registration for: "$cardId"');
+      registeredCard = await apiService.checkCardRegistration(cardId);
+      print('🔍 Card registration check result: ${registeredCard != null ? "Found" : "Not found"}');
+    } catch (e) {
+      print('❌ Error checking card registration: $e');
+    }
+    
+    if (mounted) {
+      setState(() {
+        _isProcessing = false;
+        _detectedNFCId = cardId;
+      });
+      
+      if (registeredCard != null) {
+        final cardToShow = RegisteredCard(
+          cardId: registeredCard.cardId.isNotEmpty ? registeredCard.cardId : cardId,
+          passengerName: registeredCard.passengerName,
+          balance: registeredCard.balance,
+          status: registeredCard.status,
+          registeredAt: registeredCard.registeredAt,
+          lastUsed: registeredCard.lastUsed,
+        );
+        
+        _showCardInfoBottomSheet(cardToShow);
+        final passengerName = registeredCard.passengerName;
+        setState(() {
+          _statusText = passengerName != null 
+              ? 'Card registered - $passengerName' 
+              : 'Card registered';
+        });
+      } else {
+        _showCardNotRegisteredDialog(cardId);
+        setState(() {
+          _statusText = 'Card not registered';
+        });
+      }
+    }
   }
 
   Future<void> _checkNFCAvailability() async {
@@ -51,28 +174,190 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
     }
   }
 
-  /// Prepare NFC session to intercept tags (without reading yet)
-  Future<void> _prepareNFCSession() async {
+  /// Start NFC session immediately to detect tags as soon as screen loads
+  Future<void> _startNFCSession() async {
+    if (_sessionActive) {
+      print('📱 NFC session already active');
+      return;
+    }
+
     try {
       final nfcService = ref.read(nfcServiceProvider);
+      
       // Check if NFC is available
       final isAvailable = await nfcService.isAvailable();
       if (!isAvailable) {
+        if (mounted) {
+          setState(() {
+            _statusText = 'NFC Not Available';
+          });
+        }
         print('⚠️ NFC not available on this device');
         return;
       }
-      print('✅ NFC is available, ready to read tags');
+
+      print('📱 Starting background NFC session...');
+      
+      // Set up callbacks for automatic tag detection
+      nfcService.onSuccess = (response) {
+        if (mounted) {
+          HapticFeedback.mediumImpact();
+          setState(() {
+            _statusText = widget.isTapIn ? 'Tap-In Successful' : 'Tap-Out Successful';
+            _isScanning = false;
+            _isProcessing = false;
+          });
+          _showResultBottomSheet(response);
+        }
+      };
+
+      nfcService.onError = (error) {
+        if (mounted) {
+          String displayError = error;
+          String statusText = 'Ready to Scan';
+          
+          if (error.contains('Saved offline')) {
+            statusText = 'Saved offline';
+            final parts = error.split('Saved offline: ');
+            if (parts.length > 1) {
+              displayError = parts[1];
+            }
+          } else if (error.contains('No NFC') || error.contains('No card')) {
+            statusText = 'Ready to Scan';
+            // Don't show error snackbar for "no card" - it's normal
+            return;
+          } else {
+            statusText = 'Error';
+          }
+          
+          setState(() {
+            _isScanning = false;
+            _isProcessing = false;
+            _statusText = statusText;
+          });
+          
+          if (!error.contains('No NFC') && !error.contains('No card')) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(displayError),
+                backgroundColor: error.contains('offline') 
+                    ? AppTheme.warningColor 
+                    : AppTheme.errorColor,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+        }
+      };
+
+      nfcService.onProgress = (message) {
+        if (mounted) {
+          setState(() {
+            _statusText = message;
+          });
+        }
+      };
+
+      // Start a continuous background session that listens for tags
+      _sessionActive = true;
+      if (mounted) {
+        setState(() {
+          _statusText = 'Ready - Tap your card';
+        });
+      }
+      
+      print('📱 About to start background NFC session...');
+      
+      // Start background session that checks registration and shows info
+      nfcService.startBackgroundSession(
+        onCardDetected: (cardId) async {
+          if (mounted && !_isProcessing) {
+            print('📱 Card detected in background: $cardId');
+            setState(() {
+              _isProcessing = true;
+              _statusText = 'Checking card...';
+              _detectedNFCId = cardId;
+            });
+            
+            // First, check if card is registered
+            final apiService = ApiService();
+            RegisteredCard? registeredCard;
+            try {
+              print('🔍 Checking card registration for: "$cardId"');
+              registeredCard = await apiService.checkCardRegistration(cardId);
+              print('🔍 Card registration check result: ${registeredCard != null ? "Found" : "Not found"}');
+            } catch (e) {
+              print('❌ Error checking card registration: $e');
+            }
+            
+            if (mounted) {
+              setState(() {
+                _isProcessing = false;
+              });
+              
+              if (registeredCard != null) {
+                // Card is registered - show user info with name and balance
+                final cardToShow = RegisteredCard(
+                  cardId: registeredCard.cardId.isNotEmpty ? registeredCard.cardId : cardId,
+                  passengerName: registeredCard.passengerName,
+                  balance: registeredCard.balance,
+                  status: registeredCard.status,
+                  registeredAt: registeredCard.registeredAt,
+                  lastUsed: registeredCard.lastUsed,
+                );
+                
+                _showCardInfoBottomSheet(cardToShow);
+                final passengerName = registeredCard.passengerName;
+                setState(() {
+                  _statusText = passengerName != null 
+                      ? 'Card registered - $passengerName' 
+                      : 'Card registered';
+                });
+              } else {
+                // Card is not registered
+                _showCardNotRegisteredDialog(cardId);
+                setState(() {
+                  _statusText = 'Card not registered';
+                });
+              }
+            }
+          }
+        },
+        onError: (error) {
+          if (mounted && !error.contains('No card')) {
+            print('⚠️ Background session error: $error');
+            setState(() {
+              _statusText = 'Ready - Tap your card';
+            });
+          }
+        },
+      );
+      
+      print('✅ NFC session ready - waiting for card tap');
     } catch (e) {
-      print('⚠️ Error preparing NFC session: $e');
+      print('⚠️ Error starting NFC session: $e');
+      if (mounted) {
+        setState(() {
+          _statusText = 'Error starting NFC';
+        });
+      }
     }
   }
 
   @override
   void dispose() {
     // Stop any active NFC sessions when screen is disposed
+    _sessionActive = false;
     try {
       final nfcService = ref.read(nfcServiceProvider);
+      // Stop background session
+      nfcService.stopBackgroundSession();
+      // Also stop regular session
       nfcService.stopSession();
+      // Clear callbacks
+      nfcService.onSuccess = null;
+      nfcService.onError = null;
+      nfcService.onProgress = null;
     } catch (e) {
       print('⚠️ Error stopping NFC session: $e');
     }
@@ -91,7 +376,7 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
     try {
       final nfcService = ref.read(nfcServiceProvider);
       
-      // Set up callbacks
+      // Ensure callbacks are set (they should already be set in _startNFCSession)
       nfcService.onSuccess = (response) {
         if (mounted) {
           HapticFeedback.mediumImpact();
@@ -106,18 +391,16 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
 
       nfcService.onError = (error) {
         if (mounted) {
-          // Extract the actual error message (remove "Saved offline: " prefix if present)
           String displayError = error;
           String statusText = 'Error';
           
           if (error.contains('Saved offline')) {
             statusText = 'Saved offline';
-            // Extract the actual error after "Saved offline: "
             final parts = error.split('Saved offline: ');
             if (parts.length > 1) {
               displayError = parts[1];
             }
-          } else if (error.contains('No NFC')) {
+          } else if (error.contains('No NFC') || error.contains('No card')) {
             statusText = 'No card detected';
           } else {
             statusText = 'Error';
@@ -149,7 +432,8 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
         }
       };
 
-      // Read tag
+      // Read tag - this will start a new session if needed
+      // The session should already be active from _startNFCSession
       await nfcService.readTag(
         busId: widget.busId,
         isTapIn: widget.isTapIn,
@@ -634,6 +918,18 @@ class _NFCReaderScreenState extends ConsumerState<NFCReaderScreen> {
                 color: AppTheme.textPrimary,
               ),
             ),
+            if (_sessionActive) ...[
+              const SizedBox(height: AppTheme.spacingSM),
+              const Text(
+                'If Android shows "Choose an action",\nselect "CityGo Supervisor"',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
             if (_detectedNFCId != null) ...[
               const SizedBox(height: AppTheme.spacingSM),
               Text(
